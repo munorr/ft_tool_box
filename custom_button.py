@@ -270,16 +270,21 @@ class CustomButton(QtWidgets.QPushButton):
         if self.onlyContext:
             if event.button() in (QtCore.Qt.LeftButton, QtCore.Qt.RightButton):
                 self.show_context_menu(event.pos())
+                event.accept()  # Explicitly accept the event to prevent propagation
+                return
                 
-        else:
-            if event.button() == QtCore.Qt.LeftButton:
-                self.click_count += 1
-                if not self.timer.isActive():
-                    self.timer.start(300)
-            elif event.button() == QtCore.Qt.RightButton:
-                self.rightClicked.emit(event.pos())
+        if event.button() == QtCore.Qt.LeftButton:
+            self.click_count += 1
+            if not self.timer.isActive():
+                self.timer.start(300)
+            event.accept()  # Explicitly accept the event to prevent propagation
+        elif event.button() == QtCore.Qt.RightButton:
+            self.rightClicked.emit(event.pos())
+            event.accept()  # Explicitly accept the event to prevent propagation
+        
+        # Only call parent implementation for non-context buttons
+        if not self.onlyContext:
             super(CustomButton, self).mousePressEvent(event)
-        UT.maya_main_window().activateWindow()
         
     def mouseReleaseEvent(self, event):
         if not self.onlyContext:
@@ -288,12 +293,12 @@ class CustomButton(QtWidgets.QPushButton):
                     self.timer.stop()
                     self.click_count = 0
                     self.doubleClicked.emit()
-        super(CustomButton, self).mouseReleaseEvent(event)
+                event.accept()  # Explicitly accept the event to prevent propagation
+                super(CustomButton, self).mouseReleaseEvent(event)
         
     def performSingleClick(self):
-        if not self.onlyContext:
-            if self.click_count == 1:
-                self.singleClicked.emit()
+        if not self.onlyContext and self.click_count == 1:
+            self.singleClicked.emit()
         self.click_count = 0
 
     def leaveEvent(self, event):
@@ -468,6 +473,10 @@ class CustomToggleButton(QtWidgets.QPushButton):
     """
     toggled_with_id = QtCore.Signal(bool, int)  # Custom signal
     
+    # Class-level variable to track if we're currently in a toggle operation
+    # This prevents recursive toggling when buttons in the same group interact
+    _toggle_in_progress = False
+    
     # Class variable to keep track of different button groups
     button_groups = {}
     
@@ -536,17 +545,21 @@ class CustomToggleButton(QtWidgets.QPushButton):
         Handle toggle event. If button is part of a group and is being checked,
         uncheck all other buttons in the group.
         """
-        # Emit the signal with button id
-        self.toggled_with_id.emit(checked, self.button_id)
+        # Prevent recursive toggling
+        if CustomToggleButton._toggle_in_progress:
+            return
+            
+        CustomToggleButton._toggle_in_progress = True
         
-        # If this button is in a group and is being checked on
-        if self.group_id is not None and checked:
-            # Uncheck all other buttons in the same group
-            for button in CustomToggleButton.button_groups[self.group_id]:
-                if button is not self and button.isChecked():
-                    # Block signals temporarily to avoid recursion
-                    button.blockSignals(True)
-                    button.setChecked(False)
-                    button.blockSignals(False)
-                    # Still emit the signal for the unchecked button
-                    button.toggled_with_id.emit(False, button.button_id)
+        try:
+            # Emit the signal with the button's ID
+            self.toggled_with_id.emit(checked, self.button_id)
+            
+            # If this button is part of a group and is being checked, uncheck others
+            if self.group_id is not None and checked:
+                for button in CustomToggleButton.button_groups[self.group_id]:
+                    if button is not self and button.isChecked():
+                        button.setChecked(False)
+        finally:
+            # Always reset the toggle flag when done
+            CustomToggleButton._toggle_in_progress = False

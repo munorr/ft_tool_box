@@ -21,7 +21,6 @@ from . import utils as UT
 from . import tool_functions as TF
 from . import flow_layout as FL
 from . import custom_scroll as CS
-from . import fade_away_logic as FAL
 
 class ToolBoxWindow(QtWidgets.QWidget):
     def __init__(self, parent=None, title="Tool Box"):
@@ -91,8 +90,11 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.frame_layout.setSpacing(2)
         #-----------------------------------------------------------------------------------------------------------------------------
         #self.util_button = CB.CustomButton(icon=":moreOverlay.png", width=20, height=20, radius=10,color="#262626", ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
-        self.util_button = CB.CustomButton(text="☰",width=20, height=20, radius=3,color="#555555", textColor="#888888",text_size=8, ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
+        self.util_button = CB.CustomButton(text="☰",width=20, height=20, radius=3,color="#555555", textColor="#888888", cmHeight=22 ,ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
         self.util_button.addToMenu('Close', self.close, icon="closeTabButton.png", position=(0,0))
+        #self.util_button.addToMenu('Toggle Layout', self.toggle_layout, icon="loadToolBox.png", position=(1,0))
+        # Track current layout orientation
+        self.is_horizontal_layout = True
         self.utility_layout.addSpacing(10)
         self.utility_layout.addWidget(self.util_button)
         
@@ -130,13 +132,32 @@ class ToolBoxWindow(QtWidgets.QWidget):
         # Initialize with dynamic horizontal priority based on height
         initial_horizontal_priority = self.height() <= 75
         self.modeling_layout = FL.FlowLayout(self.modeling_widget, margin=2, spacing=8, horizontal_priority=initial_horizontal_priority)
+        
+        #self.modeling_layout = QtWidgets.QHBoxLayout(self.modeling_widget)
+        #self.modeling_layout.setContentsMargins(0, 0, 0, 0)
+        #self.modeling_layout.setSpacing(0)
+
+        self.modeling_layout_01 = QtWidgets.QHBoxLayout()
+        self.modeling_layout_01.setContentsMargins(2, 2, 2, 2)
+        self.modeling_layout_01.setSpacing(2)
+        #self.modeling_layout.addLayout(self.modeling_layout_01)
+
+        self.modeling_layout_02 = QtWidgets.QHBoxLayout()
+        self.modeling_layout_02.setContentsMargins(2, 2, 2, 2)
+        self.modeling_layout_02.setSpacing(8)
+        #self.modeling_layout.addLayout(self.modeling_layout_02)
+
+        self.modeling_layout_03 = QtWidgets.QHBoxLayout()
+        self.modeling_layout_03.setContentsMargins(2, 2, 2, 2)
+        self.modeling_layout_03.setSpacing(2)
+        #self.modeling_layout.addLayout(self.modeling_layout_03)
+        
         # Create a custom scroll area for the modeling buttons with inverted wheel scrolling (vertical wheel = horizontal scroll)
         self.modeling_scroll_area = CS.CustomScrollArea(invert_primary=True)
         self.modeling_scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         # Scrollbars are hidden but scrolling still works through wheel events
         self.modeling_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.modeling_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
 
         self.modeling_scroll_area.setStyleSheet("""
             QScrollArea {
@@ -231,6 +252,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.modeling_layout.addWidget(parent_constraint_button)
         self.modeling_layout.addWidget(self.adjustment_grp_button)
         self.modeling_layout.addWidget(anim_extra)
+        
         #-----------------------------------------------------------------------------------------------------------------------------
         # Animation Widget
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -251,6 +273,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.content_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 0px;")
         self.content_widget.addWidget(self.modeling_scroll_area)
         self.content_widget.addWidget(self.animation_widget)
+        self.content_widget.addWidget(self.graph_widget)
         # Add the content widget to the frame layout
         self.frame_layout.addWidget(self.content_widget)
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -274,6 +297,61 @@ class ToolBoxWindow(QtWidgets.QWidget):
     def switch_widget(self, checked, button_id):
         if checked:
             self.content_widget.setCurrentIndex(button_id)
+    
+    def toggle_layout(self, layouts_to_toggle=None):
+        # Toggle between horizontal and vertical layout for specified layouts
+        # If no layouts are specified, default to the modeling_layout
+        
+        # Handle the case where a boolean is passed (from menu callback)
+        if isinstance(layouts_to_toggle, bool):
+            layouts_to_toggle = None
+            
+        if layouts_to_toggle is None:
+            # Default to just the modeling layout if no layouts are specified
+            layouts_to_toggle = [(self.modeling_widget, 'modeling_layout'), (self.animation_widget, 'animation_layout')]
+        
+        for widget, layout_attr_name in layouts_to_toggle:
+            # Get the current layout for this widget
+            current_layout = widget.layout()
+            if not current_layout:
+                continue
+                
+            # Determine if the current layout is horizontal or vertical
+            is_horizontal = isinstance(current_layout, QtWidgets.QHBoxLayout)
+            
+            # Store the nested layouts to preserve them
+            nested_layouts = []
+            for i in range(current_layout.count()):
+                item = current_layout.takeAt(0)  # Remove from current layout but keep the reference
+                if item.layout():
+                    nested_layouts.append(item.layout())
+            
+            # Delete the old layout
+            QtWidgets.QWidget().setLayout(current_layout)
+            
+            # Create new layout with opposite orientation
+            if is_horizontal:
+                new_layout = QtWidgets.QVBoxLayout(widget)
+            else:
+                new_layout = QtWidgets.QHBoxLayout(widget)
+            
+            # Configure the new layout
+            new_layout.setContentsMargins(0, 0, 0, 0)
+            new_layout.setSpacing(0)
+            
+            # Add the existing nested layouts to the new layout
+            for layout in nested_layouts:
+                new_layout.addLayout(layout)
+            
+            # Store the new layout in the appropriate attribute
+            setattr(self, layout_attr_name, new_layout)
+            
+            # Update the UI for this widget
+            widget.updateGeometry()
+        
+        # Additional updates specific to the modeling layout
+        if any(attr_name == 'modeling_layout' for _, attr_name in layouts_to_toggle):
+            self.modeling_scroll_area.updateGeometry()
     #----------------------------------------------------------------------------------
     # Window event handlers
     #----------------------------------------------------------------------------------
@@ -301,7 +379,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         and adjusts the modeling layout's horizontal priority accordingly.
         """
         super(ToolBoxWindow, self).resizeEvent(event)
-        
+      
         current_height = self.height()
         height_threshold = 75
         
@@ -317,7 +395,17 @@ class ToolBoxWindow(QtWidgets.QWidget):
             self.modeling_scroll_area.updateGeometry()
         
         # Store the current height for next comparison
-        self.last_height = current_height
+        self.last_height = current_height 
+    
+    def closeEvent(self, event):
+        """Override closeEvent to properly clean up Maya window reference"""
+        # Delete the window from Maya's window list if it exists
+        window_name = self.objectName()
+        if window_name and cmds.window(window_name, exists=True):
+            cmds.deleteUI(window_name, window=True)
+            
+        # Call the parent class closeEvent to properly close the Qt window
+        super(ToolBoxWindow, self).closeEvent(event)
        
     #----------------------------------------------------------------------------------
     # Resize handling methods

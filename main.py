@@ -25,6 +25,10 @@ def show_tool_box():
     # Create a new window
     tool_box_window = UI.ToolBoxWindow(parent=UT.maya_main_window())
     
+    # Reset the flow layout to ensure proper initialization
+    if hasattr(tool_box_window, 'modeling_layout') and hasattr(tool_box_window.modeling_layout, 'reset'):
+        tool_box_window.modeling_layout.reset()
+    
     # Position the window in the center of the Maya window
     maya_window_center = UT.maya_main_window().geometry().center()
     window_width = 300  # Default width

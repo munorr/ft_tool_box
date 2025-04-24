@@ -1,7 +1,15 @@
 try:
     from PySide6 import QtWidgets, QtCore, QtGui
+    import shiboken6 as shiboken
+    import sip
 except ImportError:
     from PySide2 import QtWidgets, QtCore, QtGui
+    import shiboken2 as shiboken
+    try:
+        import sip
+    except ImportError:
+        # If sip is not available, create a simple isdeleted function
+        sip = type('sip', (), {'isdeleted': lambda obj: False})
 
 class FlowLayout(QtWidgets.QLayout):
     def __init__(self, parent=None, margin=0, spacing=2, horizontal_priority=True, horizontal_only=False):
@@ -17,9 +25,19 @@ class FlowLayout(QtWidgets.QLayout):
         self.itemList = []
     
     def __del__(self):
-        item = self.takeAt(0)
-        while item:
-            item = self.takeAt(0)
+        # Clear all items
+        while self.itemList:
+            self.takeAt(0)
+    
+    def is_valid_item(self, item):
+        """Helper method to consistently check if an item is valid and usable"""
+        try:
+            return (item is not None and 
+                    not sip.isdeleted(item) and 
+                    item.widget() is not None and 
+                    not sip.isdeleted(item.widget()))
+        except (RuntimeError, ReferenceError):
+            return False
     
     def addItem(self, item):
         self.itemList.append(item)
@@ -57,73 +75,102 @@ class FlowLayout(QtWidgets.QLayout):
     def minimumSize(self):
         size = QtCore.QSize()
         
+        # Get only valid items
+        valid_items = [item for item in self.itemList if self.is_valid_item(item)]
+        
         # If horizontal_only or horizontal_priority is True, calculate total width
         if self.horizontal_only or self.horizontal_priority:
             width = 0
             height = 0
             
-            for item in self.itemList:
+            for item in valid_items:
                 item_size = item.sizeHint()
                 width += item_size.width() + self.spacing()
                 height = max(height, item_size.height())
             
-            if len(self.itemList) > 0:
+            if valid_items:
                 width -= self.spacing()  # Remove extra spacing after last item
             
             size = QtCore.QSize(width, height)
         else:
             # Default behavior for regular flow layout
-            for item in self.itemList:
+            for item in valid_items:
                 size = size.expandedTo(item.minimumSize())
         
-        margin = self.contentsMargins().left() + self.contentsMargins().right() + self.contentsMargins().top() + self.contentsMargins().bottom()
-        size += QtCore.QSize(margin, margin)
+        # Add margins to the size
+        margins = self.contentsMargins()
+        size += QtCore.QSize(margins.left() + margins.right(), 
+                             margins.top() + margins.bottom())
         return size
     
     def doLayout(self, rect, testOnly):
-        x = rect.x() + self.contentsMargins().left()
-        y = rect.y() + self.contentsMargins().top()
+        """Arrange items according to layout rules"""
+        # Initialize position with margins
+        margins = self.contentsMargins()
+        x = rect.x() + margins.left()
+        y = rect.y() + margins.top()
         lineHeight = 0
         
-        # If horizontal_only is True, just arrange items in a single row
+        # Filter out invalid items first
+        valid_items = [item for item in self.itemList if self.is_valid_item(item)]
+        
+        # For horizontal_only layout - just arrange items in a single row
         if self.horizontal_only:
-            for item in self.itemList:
-                wid = item.widget()
-                spaceX = self.spacing() + wid.style().layoutSpacing(
-                    QtWidgets.QSizePolicy.PushButton,
-                    QtWidgets.QSizePolicy.PushButton,
-                    QtCore.Qt.Horizontal)
+            for item in valid_items:
+                spaceX = self.spacing()
                 
+                # Position the item
                 if not testOnly:
                     item.setGeometry(QtCore.QRect(QtCore.QPoint(x, y), item.sizeHint()))
                 
+                # Move to the next position
                 x += item.sizeHint().width() + spaceX
                 lineHeight = max(lineHeight, item.sizeHint().height())
             
-            return y + lineHeight - rect.y() + self.contentsMargins().bottom()
+            return y + lineHeight - rect.y() + margins.bottom()
         
         # Regular flow layout with optional horizontal priority
-        for item in self.itemList:
-            wid = item.widget()
+        available_width = rect.width() - margins.left() - margins.right()
+        
+        for item in valid_items:
+            item_width = item.sizeHint().width()
+            item_height = item.sizeHint().height()
             spaceX = self.spacing()
             spaceY = self.spacing()
             
-            nextX = x + item.sizeHint().width() + spaceX
+            nextX = x + item_width + spaceX
             
             # Check if we need to wrap to the next line
-            if nextX - spaceX > rect.right() and lineHeight > 0:
-                if not self.horizontal_priority:
-                    # Standard wrapping behavior
-                    x = rect.x() + self.contentsMargins().left()
-                    y = y + lineHeight + spaceY
-                    nextX = x + item.sizeHint().width() + spaceX
-                    lineHeight = 0
-                # If horizontal_priority is True, we don't wrap and just continue horizontally
+            if (nextX - spaceX > rect.right() - margins.right() and 
+                lineHeight > 0 and 
+                not self.horizontal_priority):
+                # Standard wrapping behavior
+                x = rect.x() + margins.left()
+                y = y + lineHeight + spaceY
+                nextX = x + item_width + spaceX
+                lineHeight = 0
             
+            # Position the item
             if not testOnly:
                 item.setGeometry(QtCore.QRect(QtCore.QPoint(x, y), item.sizeHint()))
             
+            # Move to the next position
             x = nextX
-            lineHeight = max(lineHeight, item.sizeHint().height())
+            lineHeight = max(lineHeight, item_height)
         
-        return y + lineHeight - rect.y() + self.contentsMargins().bottom()
+        return y + lineHeight - rect.y() + margins.bottom()
+    
+    def invalidate(self):
+        """Force the layout to be recalculated"""
+        self.update()
+        
+    def reset(self):
+        """Reset the layout state completely
+        
+        This method should be called when the layout is being reused after a window close/reopen
+        to ensure all cached state is cleared and the layout is properly reinitialized.
+        """
+        # Clear the item list but don't delete the items (they're still owned by their widgets)
+        self.itemList = [item for item in self.itemList if self.is_valid_item(item)]
+        # Force a complete layout recalculation
+        self.invalidate()
