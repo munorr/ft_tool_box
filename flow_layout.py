@@ -32,11 +32,20 @@ class FlowLayout(QtWidgets.QLayout):
     def is_valid_item(self, item):
         """Helper method to consistently check if an item is valid and usable"""
         try:
-            return (item is not None and 
-                    not sip.isdeleted(item) and 
-                    item.widget() is not None and 
-                    not sip.isdeleted(item.widget()))
-        except (RuntimeError, ReferenceError):
+            # First check if item exists and isn't deleted
+            if item is None or sip.isdeleted(item):
+                return False
+                
+            # Then check if widget exists and isn't deleted
+            widget = item.widget()
+            if widget is None or sip.isdeleted(widget):
+                return False
+                
+            # Additional check: verify the widget is still valid
+            # This catches more obscure cases of invalid widgets
+            widget.size()  # This will raise an exception if widget is invalid
+            return True
+        except (RuntimeError, ReferenceError, AttributeError, TypeError):
             return False
     
     def addItem(self, item):
@@ -170,7 +179,20 @@ class FlowLayout(QtWidgets.QLayout):
         This method should be called when the layout is being reused after a window close/reopen
         to ensure all cached state is cleared and the layout is properly reinitialized.
         """
-        # Clear the item list but don't delete the items (they're still owned by their widgets)
-        self.itemList = [item for item in self.itemList if self.is_valid_item(item)]
+        # Create a clean copy of valid items - prevents modification issues during iteration
+        valid_items = [item for item in self.itemList if self.is_valid_item(item)]
+        
+        # Clear the item list completely first
+        self.itemList = []
+        
+        # Add back only the valid items
+        for item in valid_items:
+            self.addItem(item)
+            
         # Force a complete layout recalculation
         self.invalidate()
+        
+        # Request an immediate geometry update
+        parent = self.parent()
+        if parent:
+            parent.updateGeometry()

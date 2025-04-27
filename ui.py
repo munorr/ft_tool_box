@@ -21,6 +21,9 @@ from . import utils as UT
 from . import tool_functions as TF
 from . import flow_layout as FL
 from . import custom_scroll as CS
+from . import custom_layout as CL
+from . import create_shape as CSP
+from . import fade_away_logic as FA
 
 class ToolBoxWindow(QtWidgets.QWidget):
     def __init__(self, parent=None, title="Tool Box"):
@@ -37,11 +40,15 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.resize_edge = None
         self.resize_range = 8  # Pixels from edge where resizing is active
         self.cursor_override_active = False
-        
+
         # Set minimum size to 70x30 as requested
         self.setMinimumSize(100, 70)
         self.setup_ui()
         self.setup_connections()
+
+        self.fade_manager = FA.FadeAway(self)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.fade_manager.show_frame_context_menu)
 
     def setup_ui(self):
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -89,10 +96,11 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.frame_layout.setContentsMargins(6, 6, 6, 6)
         self.frame_layout.setSpacing(2)
         #-----------------------------------------------------------------------------------------------------------------------------
-        #self.util_button = CB.CustomButton(icon=":moreOverlay.png", width=20, height=20, radius=10,color="#262626", ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
         self.util_button = CB.CustomButton(text="☰",width=20, height=20, radius=3,color="#555555", textColor="#888888", cmHeight=22 ,ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
-        self.util_button.addToMenu('Close', self.close, icon="closeTabButton.png", position=(0,0))
-        #self.util_button.addToMenu('Toggle Layout', self.toggle_layout, icon="loadToolBox.png", position=(1,0))
+        #self.util_button.addToMenu('Close', self.close, icon="closeTabButton.png", position=(0,0))
+        self.util_button.addToMenu('Horizontal', self.horizontal_window, icon="loadToolBox.png", position=(0,0))
+        self.util_button.addToMenu('Vertical', self.vertical_window, icon="loadToolBox.png", position=(1,0))
+        
         # Track current layout orientation
         self.is_horizontal_layout = True
         self.utility_layout.addSpacing(10)
@@ -100,6 +108,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         
         # Connect to the button's mouse events for dragging
         self.util_button.installEventFilter(self)
+        initial_horizontal_priority = self.height() <= 75
         #-----------------------------------------------------------------------------------------------------------------------------
         # Header Layout
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -107,10 +116,11 @@ class ToolBoxWindow(QtWidgets.QWidget):
         tbh = 12
         tbr = 6
         
-        self.model_toggle_button = CB.CustomToggleButton(text='1', button_id=0, group_id="widget_stack", bg_color='#5285A6', tooltip="Toggle between modeling and animation tools", border_radius=tbr, width=tbw, height=tbh)
-        self.animation_toggle_button = CB.CustomToggleButton(text='2', button_id=1, group_id="widget_stack", bg_color='#5285A6', tooltip="Toggle between modeling and animation tools", border_radius=tbr, width=tbw, height=tbh)
-        self.graph_toggle_button = CB.CustomToggleButton(text='3', button_id=2, group_id="widget_stack", bg_color='#5285A6', tooltip="Toggle between modeling and animation tools", border_radius=tbr, width=tbw, height=tbh)
-        
+        self.model_toggle_button = CB.CustomToggleButton(text='1', button_id=0, group_id="widget_stack", checked_color='#5285A6', tooltip="Modeling Tools", border_radius=tbr, width=tbw, height=tbh)
+        self.animation_toggle_button = CB.CustomToggleButton(text='2', button_id=1, group_id="widget_stack", checked_color='#5285A6', tooltip="Animation Tools", border_radius=tbr, width=tbw, height=tbh)
+        self.graph_toggle_button = CB.CustomToggleButton(text='3', button_id=2, group_id="widget_stack", checked_color='#5285A6', tooltip="Graph Editor Tools", border_radius=tbr, width=tbw, height=tbh)
+        self.new_custom_tab_button = CB.CustomToggleButton(text='4', button_id=3, group_id="widget_stack", checked_color='#6a993e',unchecked_color='#798b61',hover_color='#84bf4d', tooltip="New Custom Tab", border_radius=2, width=tbw, height=tbh)
+
         self.close_button = CB.CustomButton(text="✕", width=tbw, height=tbh, color="#ff0000", textColor="rgba(255, 255, 255, 0.9)",text_size=6, tooltip="Close Tool Box", radius=tbr)
         self.close_button.singleClicked.connect(self.close)
 
@@ -118,11 +128,62 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.body_header_layout.addWidget(self.model_toggle_button)
         self.body_header_layout.addWidget(self.animation_toggle_button)
         self.body_header_layout.addWidget(self.graph_toggle_button)
+        self.body_header_layout.addSpacing(2)
+        self.body_header_layout.addWidget(self.new_custom_tab_button)
         self.body_header_layout.addSpacing(10)
         self.body_header_layout.addWidget(self.close_button)
 
         # Initially check the first button to show the first widget
         self.model_toggle_button.setChecked(True)
+        #-----------------------------------------------------------------------------------------------------------------------------
+        # Scrollbar style
+        def apply_transparent_scroll_style(widget):
+            widget.setStyleSheet("""
+                QScrollArea {
+                    background-color: transparent;
+                    border: none;
+                }
+                QScrollBar:horizontal {
+                    border: none;
+                    background: transparent;
+                    height: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-width: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-height: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    width: 0px;
+                }
+            """)
+        
+        def mrs(col):
+            self.reset_transform_button = CB.CustomButton(text='Reset', icon=':delete.png', color='#222222', size=14, tooltip="Resets the object transform to Origin.",
+                                                ContextMenu=True, onlyContext=True,cmColor='#444444',cmHeight=22)
+            self.reset_transform_button.addToMenu("All", TF.reset_all, icon='delete.png', position=(0,0))
+            self.reset_transform_button.addToMenu("Move", TF.reset_move, icon='delete.png', position=(1,0))
+            self.reset_transform_button.addToMenu("Rotate", TF.reset_rotate, icon='delete.png', position=(2,0))
+            self.reset_transform_button.addToMenu("Scale", TF.reset_scale, icon='delete.png', position=(3,0))
+            
+            self.reset_transform_button.doubleClicked.connect(TF.reset_all)
+            col.addWidget(self.reset_transform_button)
+            return col
         #-----------------------------------------------------------------------------------------------------------------------------
         # Modeling Widget
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -130,27 +191,29 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.modeling_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 4px;")
         self.modeling_widget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
         # Initialize with dynamic horizontal priority based on height
-        initial_horizontal_priority = self.height() <= 75
-        self.modeling_layout = FL.FlowLayout(self.modeling_widget, margin=2, spacing=8, horizontal_priority=initial_horizontal_priority)
         
-        #self.modeling_layout = QtWidgets.QHBoxLayout(self.modeling_widget)
-        #self.modeling_layout.setContentsMargins(0, 0, 0, 0)
-        #self.modeling_layout.setSpacing(0)
+        self.modeling_layout = QtWidgets.QHBoxLayout(self.modeling_widget)
+        self.modeling_layout.setSpacing(4)
+        self.modeling_layout.setContentsMargins(0, 0, 0, 0)
+        self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.modeling_layout_01 = QtWidgets.QHBoxLayout()
-        self.modeling_layout_01.setContentsMargins(2, 2, 2, 2)
-        self.modeling_layout_01.setSpacing(2)
-        #self.modeling_layout.addLayout(self.modeling_layout_01)
+        self.modeling_layout_01 = QtWidgets.QHBoxLayout(self.modeling_widget)
+        self.modeling_layout_01.setSpacing(4)
+        self.modeling_layout_01.setContentsMargins(0, 0, 0, 0)
+        self.modeling_layout.addLayout(self.modeling_layout_01)
+        self.modeling_layout_01.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.modeling_layout_02 = QtWidgets.QHBoxLayout()
-        self.modeling_layout_02.setContentsMargins(2, 2, 2, 2)
-        self.modeling_layout_02.setSpacing(8)
-        #self.modeling_layout.addLayout(self.modeling_layout_02)
+        self.modeling_layout_02 = CL.CustomGridLayout(rows=1, cols=0)  
+        self.modeling_layout.addLayout(self.modeling_layout_02)
+        #self.modeling_layout_02.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.modeling_layout_03 = QtWidgets.QHBoxLayout()
-        self.modeling_layout_03.setContentsMargins(2, 2, 2, 2)
-        self.modeling_layout_03.setSpacing(2)
-        #self.modeling_layout.addLayout(self.modeling_layout_03)
+        # Use a custom grid layout for the third row of buttons to support both horizontal and grid patterns
+        self.modeling_layout_03 = CL.CustomGridLayout(rows=1, cols=0)  
+        self.modeling_layout.addLayout(self.modeling_layout_03)
+        #self.modeling_layout_03.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.modeling_layout_04 = CL.CustomGridLayout(rows=1, cols=0)  
+        self.modeling_layout.addLayout(self.modeling_layout_04)
         
         # Create a custom scroll area for the modeling buttons with inverted wheel scrolling (vertical wheel = horizontal scroll)
         self.modeling_scroll_area = CS.CustomScrollArea(invert_primary=True)
@@ -159,121 +222,182 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.modeling_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.modeling_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
-        self.modeling_scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: transparent;
-                border: none;
-            }
-            QScrollBar:horizontal {
-                border: none;
-                background: transparent;
-                height: 8px;
-                margin: 0px 0px 0px 0px;
-            }
-            QScrollBar::handle:horizontal {
-                background: rgba(100, 100, 100, 0.5);
-                min-width: 20px;
-                border-radius: 0px;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0px;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: transparent;
-                width: 8px;
-                margin: 0px 0px 0px 0px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(100, 100, 100, 0.5);
-                min-height: 20px;
-                border-radius: 0px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                width: 0px;
-            }
-        """)
+        apply_transparent_scroll_style(self.modeling_scroll_area)
         self.modeling_scroll_area.setWidget(self.modeling_widget)
         #-----------------------------------------------------------------------------------------------------------------------------
-        reset_transform_button = CB.CustomButton(text='Reset', icon=':delete.png', color='#222222', size=14, tooltip="Resets the object transform to Origin.",
-                                                ContextMenu=True, onlyContext=False)
-        reset_transform_button.addToMenu("Move", TF.reset_move, icon='delete.png', position=(0,0))
-        reset_transform_button.addToMenu("Rotate", TF.reset_rotate, icon='delete.png', position=(1,0))
-        reset_transform_button.addToMenu("Scale", TF.reset_scale, icon='delete.png', position=(2,0))
-        reset_transform_button.singleClicked.connect(TF.reset_all)
-        self.modeling_layout.addWidget(reset_transform_button)
-        #-----------------------------------------------------------------------------------------------------------------------------
-        store_pos_button = CB.CustomButton(text='Store Pos', color='#16AAA6', tooltip="Store Position: Stores the position of selected Vertices, Edges or Faces. Double Click to make locator visible")
-        move_to_pos_button = CB.CustomButton(text='Move to Pos', color='#D58C09', tooltip="Move to Position: Move selected object(s) to the stored position.")
+        mrs(self.modeling_layout_01)
+        self.store_pos_button = CB.CustomButton(text='Store Pos', color='#16AAA6', tooltip="Store Position: Stores the position of selected Vertices, Edges or Faces. Double Click to make locator visible")
+        self.move_to_pos_button = CB.CustomButton(text='Move to Pos', color='#D58C09', tooltip="Move to Position: Move selected object(s) to the stored position.")
 
-        parent_constraint_button = CB.CustomButton(icon=':parentConstraint.png', flat=True,color='#444444', tooltip="Constraint active object to selected object."
-                                                ,ContextMenu=True, onlyContext=True,cmColor='#5285a6', cmHeight=22)
-        parent_constraint_button.addToMenu("Parent", TF.parent_constraint , position=(0, 0), icon='parentConstraint.png')
-        parent_constraint_button.addToMenu("Offset", TF.parent_constraint_offset, position=(0, 1))
+        self.parent_constraint_button = CB.CustomButton(icon=':parentConstraint.png', text='Constraints', size=16, color='#262626', tooltip="Constraint active object to selected object."
+                                                ,ContextMenu=True, onlyContext=True,cmColor='#444444', cmHeight=22)
+        self.parent_constraint_button.addToMenu("Parent", TF.parent_constraint , position=(0, 0), icon='parentConstraint.png')
+        self.parent_constraint_button.addToMenu("Offset", TF.parent_constraint_offset, position=(0, 1))
 
-        parent_constraint_button.addToMenu("Point ", TF.point_constraint, position=(1, 0), icon='pointConstraint.svg')
-        parent_constraint_button.addToMenu("Offset ", TF.point_constraint_offset, position=(1, 1))
+        self.parent_constraint_button.addToMenu("Point ", TF.point_constraint, position=(1, 0), icon='pointConstraint.svg')
+        self.parent_constraint_button.addToMenu("Offset ", TF.point_constraint_offset, position=(1, 1))
 
-        parent_constraint_button.addToMenu("Orient", TF.orient_constraint, position=(2, 0), icon='orientConstraint.png')
-        parent_constraint_button.addToMenu("Offset", TF.orient_constraint_offset, position=(2, 1))
+        self.parent_constraint_button.addToMenu("Orient", TF.orient_constraint, position=(2, 0), icon='orientConstraint.png')
+        self.parent_constraint_button.addToMenu("Offset", TF.orient_constraint_offset, position=(2, 1))
 
-        parent_constraint_button.addToMenu("Scale", TF.scale_constraint, position=(3, 0), icon='scaleConstraint.png')
-        parent_constraint_button.addToMenu("Offset", TF.scale_constraint_offset, position=(3, 1))
+        self.parent_constraint_button.addToMenu("Scale", TF.scale_constraint, position=(3, 0), icon='scaleConstraint.png')
+        self.parent_constraint_button.addToMenu("Offset", TF.scale_constraint_offset, position=(3, 1))
 
-        parent_constraint_button.addToMenu("Aim", TF.aim_constraint, position=(4, 0), icon='aimConstraint.png')
-        parent_constraint_button.addToMenu("Offset", TF.aim_constraint_offset, position=(4, 1))
+        self.parent_constraint_button.addToMenu("Aim", TF.aim_constraint, position=(4, 0), icon='aimConstraint.png')
+        self.parent_constraint_button.addToMenu("Offset", TF.aim_constraint_offset, position=(4, 1))
 
-        parent_constraint_button.addToMenu("Pole Vector", TF.pole_vector_constraint, position=(5, 0),colSpan=2, icon='poleVectorConstraint.png')
+        self.parent_constraint_button.addToMenu("Pole Vector", TF.pole_vector_constraint, position=(5, 0),colSpan=2, icon='poleVectorConstraint.png')
         
         adj_grp_tt = '<b>Create Adjustment Group:</b> <br> Single Click: Create offset group for selected objects. <br> Double Click: Select the control object and the joint object to create the adjustment group.'
-        self.adjustment_grp_button = CB.CustomButton(text='GRP', color='#112f61', tooltip=adj_grp_tt, ContextMenu=True, cmColor='#226dc0',width=35)
+        self.adjustment_grp_button = CB.CustomButton(text='Groups', color='#1a5697', tooltip=adj_grp_tt, ContextMenu=True, cmColor='#226dc0')
         self.adjustment_grp_button.addToMenu("1 Group", TF.create_single_adjustment_group, position=(0, 0))
         self.adjustment_grp_button.addToMenu("Snap", TF.create_single_adjustment_group_move, position=(0, 1))
         self.adjustment_grp_button.addToMenu("Multi", TF.create_single_adjustment_group_move_multi, position=(0, 2))
         self.adjustment_grp_button.addToMenu("2 Groups", TF.create_double_adjustment_group, position=(1, 0))
         self.adjustment_grp_button.addToMenu("Snap", TF.create_double_adjustment_group_move, position=(1, 1))
 
-        anim_extra = CB.CustomButton(icon=':moreOverlay.png', flat =False, color='#262626', tooltip="More Options.",ContextMenu=True, onlyContext=True,cmColor='#5285a6', cmHeight=22)
-        anim_extra.addToMenu("Mute All", TF.mute_all)
-        anim_extra.addToMenu("Unmute All", TF.unMute_all)
-        anim_extra.addToMenu("Mute Selected", TF.mute_selected)
-        anim_extra.addToMenu("Unmute Selected", TF.unMute_selected)
-        anim_extra.addToMenu("Break Connections", TF.break_connections,colSpan=2)
+        self.anim_extra = CB.CustomButton(icon=':moreOverlay.png', flat =False, color='#262626', tooltip="More Options.",ContextMenu=True, onlyContext=True,cmColor='#5285a6', cmHeight=22)
+        self.anim_extra.addToMenu("Mute All", TF.mute_all)
+        self.anim_extra.addToMenu("Unmute All", TF.unMute_all)
+        self.anim_extra.addToMenu("Mute Selected", TF.mute_selected)
+        self.anim_extra.addToMenu("Unmute Selected", TF.unMute_selected)
+        self.anim_extra.addToMenu("Break Connections", TF.break_connections,colSpan=2)
 
-        store_pos_button.singleClicked.connect(TF.store_component_position)
-        move_to_pos_button.singleClicked.connect(TF.move_objects_to_stored_position)
-        parent_constraint_button.singleClicked.connect(TF.parent_constraint)
-        parent_constraint_button.doubleClicked.connect(TF.parent_constraint_options)
+        self.centerPivot_button = CB.CustomButton(icon=':CenterPivot.png',color='#333333', tooltip="Resets the selected object(s) pivot to the center.")
+        self.deleteHistory_button = CB.CustomButton(icon=':DeleteHistory.png',color='#333333', tooltip="Delete construction history on selected object(s).")
+        self.freezeTransform_button = CB.CustomButton(icon=':FreezeTransform.png', color='#333333', tooltip="Changes curent transform values to base transform values.",ContextMenu=True)
+        self.freezeTransform_button.addToMenu("Freeze Translate", TF.freeze_translate, position=(0, 0))
+        self.freezeTransform_button.addToMenu("Freeze Rotate", TF.freeze_rotate, position=(1, 0))
+        self.freezeTransform_button.addToMenu("Freeze Scale", TF.freeze_scale, position=(2, 0))
+        self.object_to_world_button = CB.CustomButton(icon=':absolute.png', color='#9c6bce', size=22, tooltip="Object to world Origin: Moves object to world origin.")
+
+        self.active_to_selected_button = CB.CustomButton(icon=':absolute.png', color='#C41B16', size=22, tooltip="Snap to Active Object: Moves selected object(s) to Active Objects Position.",ContextMenu=True)
+        self.active_to_selected_button.addToMenu("Move", TF.match_move, position=(0, 0))
+        self.active_to_selected_button.addToMenu("Rotate", TF.match_rotate, position=(1, 0))
+        self.active_to_selected_button.addToMenu("Scale", TF.match_scale, position=(2, 0))
+        self.active_to_selected_button.addToMenu("All", TF.match_all, position=(3, 0))
+        
+        self.pivot_to_world_button = CB.CustomButton(icon=':absolute.png', color='#049E9F', size=22, tooltip="Pivot to Stored Position: Moves the object(s) Stored Position.")
+
+        pivot_to_selected_button_tt = "Selected Pivot to Active Pivot: Moves the pivot of selected object(s) to the pivot of active objects(s)."
+        self.pivot_to_selected_button = CB.CustomButton(icon=':absolute.png', color='#6C9809', size=22, tooltip=pivot_to_selected_button_tt,ContextMenu=True)
+        self.pivot_to_selected_button.addToMenu("Position", TF.selected_pivot_to_active_pivot_pos, position=(0, 0))
+        self.pivot_to_selected_button.addToMenu("Orientation", TF.selected_pivot_to_active_pivot_ori, position=(0, 1))
+        self.pivot_to_selected_button.addToMenu("All", TF.selected_pivot_to_active_pivot_all, position=(0, 2))
+        self.pivot_to_selected_button.addToMenu("Copy Joint Pivot", TF.copy_joint_pivot,colSpan=3)
+
+        self.create_shape_button = CB.CustomButton(text='Create Shape', color='#262626', tooltip="Create Shape: Creates a shape based on the selected object(s).",ContextMenu=True, onlyContext=True)
+        self.create_shape_button.addToMenu("Circle", CSP.circle_sc, position=(0, 0))
+        self.create_shape_button.addToMenu("Square", CSP.square_sc, position=(1, 0))
+        self.create_shape_button.addToMenu("Cube", CSP.cube_sc, position=(2, 0))
+        self.create_shape_button.addToMenu("Triangle", CSP.triangle_sc, position=(3, 0))
+        self.create_shape_button.addToMenu("Pyramid", CSP.pyramid_sc, position=(4, 0))
+        self.create_shape_button.addToMenu("Arrow", CSP.arrow_sc, position=(5, 0))
+        self.create_shape_button.addToMenu("Cycle", CSP.cycle_sc, position=(6, 0))
+        #self.color_override_button = CB.CustomButton(text='Color', color='#262626', tooltip="Override Color: Overrides the color of the selected object(s).")
+        self.color_override_button = CB.ColorPickerButton()
+        
+        #-----------------------------------------------------------------------------------------------------------------------------
+        self.store_pos_button.singleClicked.connect(TF.store_component_position)
+        self.move_to_pos_button.singleClicked.connect(TF.move_objects_to_stored_position)
+        self.parent_constraint_button.singleClicked.connect(TF.parent_constraint)
+        self.parent_constraint_button.doubleClicked.connect(TF.parent_constraint_options)
         self.adjustment_grp_button.singleClicked.connect(TF.create_single_adjustment_group)
         self.adjustment_grp_button.doubleClicked.connect(TF.create_single_adjustment_group_move)
 
-        self.modeling_layout.addWidget(store_pos_button)
-        self.modeling_layout.addWidget(move_to_pos_button)
-        self.modeling_layout.addWidget(parent_constraint_button)
-        self.modeling_layout.addWidget(self.adjustment_grp_button)
-        self.modeling_layout.addWidget(anim_extra)
+        self.centerPivot_button.singleClicked.connect(TF.center_pivot)
+        self.deleteHistory_button.singleClicked.connect(TF.delete_history)
+        self.freezeTransform_button.singleClicked.connect(TF.freeze_transformation)
+        self.object_to_world_button.singleClicked.connect(TF.object_to_world_origin)
+        self.active_to_selected_button.singleClicked.connect(TF.object_to_active_position)
+        self.pivot_to_world_button.singleClicked.connect(TF.pivot_to_world_origin)
+        self.pivot_to_selected_button.singleClicked.connect(TF.selected_pivot_to_active_pivot_pos)
+        self.pivot_to_selected_button.doubleClicked.connect(TF.selected_pivot_to_active_pivot_ori)
+
+        #self.color_override_button.singleClicked.connect(lambda: CB.ColorPickerMenu().show_color_menu(self.color_override_button))
         
+        #-----------------------------------------------------------------------------------------------------------------------------
+        self.modeling_layout_02.addWidget(self.store_pos_button)
+        self.modeling_layout_02.addWidget(self.move_to_pos_button)
+        self.modeling_layout_02.addWidget(self.parent_constraint_button)
+        self.modeling_layout_02.addWidget(self.adjustment_grp_button)
+        
+        #self.modeling_layout_02.addSpacing(10)
+
+        # Add buttons to grid in horizontal pattern (all in one row)
+        self.modeling_layout_03.addWidget(self.centerPivot_button)
+        self.modeling_layout_03.addWidget(self.deleteHistory_button)
+        self.modeling_layout_03.addWidget(self.freezeTransform_button)
+        self.modeling_layout_03.addWidget(self.anim_extra)
+        self.modeling_layout_03.addWidget(self.active_to_selected_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_world_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_selected_button)
+        self.modeling_layout_03.addWidget(self.object_to_world_button)
+
+        self.modeling_layout_04.addWidget(self.create_shape_button)
+        self.modeling_layout_04.addWidget(self.color_override_button)
         #-----------------------------------------------------------------------------------------------------------------------------
         # Animation Widget
         #-----------------------------------------------------------------------------------------------------------------------------
         self.animation_widget = QtWidgets.QWidget()
-        self.animation_layout = QtWidgets.QVBoxLayout(self.animation_widget)
-        self.animation_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
-        self.animation_layout.setSpacing(2)
+        self.animation_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 4px;")
+
+        self.animation_layout = QtWidgets.QHBoxLayout(self.animation_widget)
+        self.animation_layout.setSpacing(4)
+        self.animation_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.animation_scroll_area = CS.CustomScrollArea(invert_primary=True)
+        self.animation_scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        # Scrollbars are hidden but scrolling still works through wheel events
+        self.animation_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self.animation_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        
+        apply_transparent_scroll_style(self.animation_scroll_area)
+        self.animation_scroll_area.setWidget(self.animation_widget)
+        #-----------------------------------------------------------------------------------------------------------------------------
+        mrs(self.animation_layout)
+
+        self.key_frame_button = CB.CustomButton(text='Key', color='#d62e22', tooltip="Sets key frame.")
+        self.key_breakdown_button = CB.CustomButton(text='Key', color='#3fb07f', tooltip="Sets breakdown frame.")
+        
+        self.copy_key_button = CB.CustomButton(text='Copy', color='#293F64', tooltip="Copy selected key(s).")
+        self.paste_key_button = CB.CustomButton(text='Paste', color='#1699CA', tooltip="Paste copied key(s).")
+        self.paste_inverse_key_button = CB.CustomButton(text='Paste Inverse', color='#9416CA', tooltip="Paste Inverted copied keys(s).")
+        self.remove_inbetween_button = CB.CustomButton(text='<', color='#496d88', width=24, tooltip="Remove Inbetween at current time.")
+        self.add_inbetween_button = CB.CustomButton(text='>', color='#496d88', width=24, tooltip="Add Inbetween at current time.")
+        self.delete_key_button = CB.CustomButton(text='Delete Key', color='#A00000', size=16, tooltip="Deletes keys from the given start frame to the current frame.")
+        
+        self.animation_layout.addWidget(self.key_frame_button)
+        self.animation_layout.addWidget(self.key_breakdown_button)
+        self.animation_layout.addWidget(self.copy_key_button)
+        self.animation_layout.addWidget(self.paste_key_button)
+        self.animation_layout.addWidget(self.paste_inverse_key_button)
+        self.animation_layout.addWidget(self.remove_inbetween_button)
+        self.animation_layout.addWidget(self.add_inbetween_button)
+        self.animation_layout.addWidget(self.delete_key_button)
         #-----------------------------------------------------------------------------------------------------------------------------
         # Graph Widget
         #-----------------------------------------------------------------------------------------------------------------------------
         self.graph_widget = QtWidgets.QWidget()
-        self.graph_layout = QtWidgets.QVBoxLayout(self.graph_widget)
-        self.graph_layout.setContentsMargins(2, 2, 2, 2)  # Minimal margins
-        self.graph_layout.setSpacing(2)
+        self.graph_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 4px;")
+        self.graph_widget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        self.graph_layout = QtWidgets.QHBoxLayout(self.graph_widget)
+        self.graph_layout.setSpacing(4)
+        self.graph_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.graph_scroll_area = CS.CustomScrollArea(invert_primary=True)
+        self.graph_scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        apply_transparent_scroll_style(self.graph_scroll_area)
+        self.graph_scroll_area.setWidget(self.graph_widget)
+        #-----------------------------------------------------------------------------------------------------------------------------
+        mrs(self.graph_layout)
         #-----------------------------------------------------------------------------------------------------------------------------
         # Stacked Widget
         self.content_widget = QtWidgets.QStackedWidget()
         self.content_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 0px;")
         self.content_widget.addWidget(self.modeling_scroll_area)
-        self.content_widget.addWidget(self.animation_widget)
-        self.content_widget.addWidget(self.graph_widget)
+        self.content_widget.addWidget(self.animation_scroll_area)
+        self.content_widget.addWidget(self.graph_scroll_area)
         # Add the content widget to the frame layout
         self.frame_layout.addWidget(self.content_widget)
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -298,60 +422,124 @@ class ToolBoxWindow(QtWidgets.QWidget):
         if checked:
             self.content_widget.setCurrentIndex(button_id)
     
-    def toggle_layout(self, layouts_to_toggle=None):
-        # Toggle between horizontal and vertical layout for specified layouts
-        # If no layouts are specified, default to the modeling_layout
+    def clear_layout(self, layout):
+        """Remove all widgets from the given layout."""
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget():
+                layout.removeWidget(item.widget())
+        return layout
+    
+    def horizontal_window(self):
+        cursor_position = QtGui.QCursor.pos()
+        window_width = 300
+        window_height = 70
+        x = cursor_position.x() - (window_width +50)
+        y = cursor_position.y() - (window_height // 2)
+        self.setGeometry(x, y, window_width, window_height)
+        self.last_height = window_height
+        UT.maya_main_window().activateWindow()
+
+        # Set all layouts to horizontal direction
+        self.modeling_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+        self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter)
+        self.modeling_layout_01.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+        self.animation_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+        self.graph_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
         
-        # Handle the case where a boolean is passed (from menu callback)
-        if isinstance(layouts_to_toggle, bool):
-            layouts_to_toggle = None
-            
-        if layouts_to_toggle is None:
-            # Default to just the modeling layout if no layouts are specified
-            layouts_to_toggle = [(self.modeling_widget, 'modeling_layout'), (self.animation_widget, 'animation_layout')]
+        # Rearrange grid to horizontal pattern (all in one row)
         
-        for widget, layout_attr_name in layouts_to_toggle:
-            # Get the current layout for this widget
-            current_layout = widget.layout()
-            if not current_layout:
-                continue
+        # Configure grid layouts for horizontal arrangement
+        self.modeling_layout_02.grid(1, 0)  
+        self.modeling_layout_03.grid(1, 0)  
+        self.modeling_layout_04.grid(1, 0)  
+        
+        # Clear existing layouts
+        self.modeling_layout_02.clear()
+        self.modeling_layout_03.clear()
+        self.modeling_layout_04.clear()
                 
-            # Determine if the current layout is horizontal or vertical
-            is_horizontal = isinstance(current_layout, QtWidgets.QHBoxLayout)
-            
-            # Store the nested layouts to preserve them
-            nested_layouts = []
-            for i in range(current_layout.count()):
-                item = current_layout.takeAt(0)  # Remove from current layout but keep the reference
-                if item.layout():
-                    nested_layouts.append(item.layout())
-            
-            # Delete the old layout
-            QtWidgets.QWidget().setLayout(current_layout)
-            
-            # Create new layout with opposite orientation
-            if is_horizontal:
-                new_layout = QtWidgets.QVBoxLayout(widget)
-            else:
-                new_layout = QtWidgets.QHBoxLayout(widget)
-            
-            # Configure the new layout
-            new_layout.setContentsMargins(0, 0, 0, 0)
-            new_layout.setSpacing(0)
-            
-            # Add the existing nested layouts to the new layout
-            for layout in nested_layouts:
-                new_layout.addLayout(layout)
-            
-            # Store the new layout in the appropriate attribute
-            setattr(self, layout_attr_name, new_layout)
-            
-            # Update the UI for this widget
-            widget.updateGeometry()
+        # Add widgets to the layouts - positions are automatically calculated
+        self.modeling_layout_02.addWidget(self.store_pos_button)
+        self.modeling_layout_02.addWidget(self.move_to_pos_button)
+        self.modeling_layout_02.addWidget(self.parent_constraint_button)
+        self.modeling_layout_02.addWidget(self.adjustment_grp_button)
         
-        # Additional updates specific to the modeling layout
-        if any(attr_name == 'modeling_layout' for _, attr_name in layouts_to_toggle):
-            self.modeling_scroll_area.updateGeometry()
+
+        self.modeling_layout_03.addWidget(self.centerPivot_button)
+        self.modeling_layout_03.addWidget(self.deleteHistory_button)
+        self.modeling_layout_03.addWidget(self.freezeTransform_button)
+        self.modeling_layout_03.addWidget(self.anim_extra)
+        self.modeling_layout_03.addWidget(self.active_to_selected_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_world_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_selected_button)
+        self.modeling_layout_03.addWidget(self.object_to_world_button)
+        
+        self.modeling_layout_04.addWidget(self.create_shape_button)
+        self.modeling_layout_04.addWidget(self.color_override_button)
+        # Force layout update
+        self.modeling_widget.updateGeometry()
+        self.modeling_scroll_area.updateGeometry()
+        self.animation_widget.updateGeometry()
+        self.animation_scroll_area.updateGeometry()
+        self.graph_widget.updateGeometry()
+        self.graph_scroll_area.updateGeometry()
+        
+    def vertical_window(self):
+        cursor_position = QtGui.QCursor.pos()
+        window_width = 165
+        window_height = 300
+        x = cursor_position.x() - (window_width +50)
+        y = cursor_position.y() - (window_height // 2)
+        self.setGeometry(x, y, window_width, window_height)
+        self.last_height = window_height
+        UT.maya_main_window().activateWindow()
+
+        # Set layouts to vertical direction
+        self.modeling_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+        self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignTop)
+        self.modeling_layout_01.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+        self.animation_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+        self.graph_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+        
+        # Rearrange grid to vertical pattern
+        
+        # Configure grid layouts for vertical arrangement
+        self.modeling_layout_02.grid(0, 1)  # 5 rows, 1 column
+        self.modeling_layout_03.grid(0, 4)  # 2 rows, 4 columns
+        self.modeling_layout_04.grid(0, 1)  # 2 rows, 4 columns
+        
+        # Clear existing layouts
+        self.modeling_layout_02.clear()
+        self.modeling_layout_03.clear()
+        self.modeling_layout_04.clear()
+        
+        # Add widgets to the layouts - positions are automatically calculated
+        self.modeling_layout_02.addWidget(self.store_pos_button)
+        self.modeling_layout_02.addWidget(self.move_to_pos_button)
+        self.modeling_layout_02.addWidget(self.parent_constraint_button)
+        self.modeling_layout_02.addWidget(self.adjustment_grp_button)
+        
+        self.modeling_layout_03.addWidget(self.centerPivot_button)
+        self.modeling_layout_03.addWidget(self.deleteHistory_button)
+        self.modeling_layout_03.addWidget(self.freezeTransform_button)
+        self.modeling_layout_03.addWidget(self.anim_extra)
+        self.modeling_layout_03.addWidget(self.active_to_selected_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_world_button)
+        self.modeling_layout_03.addWidget(self.pivot_to_selected_button)
+        self.modeling_layout_03.addWidget(self.object_to_world_button)
+        
+        self.modeling_layout_04.addWidget(self.create_shape_button)
+        self.modeling_layout_04.addWidget(self.color_override_button)
+
+        # Force layout update
+        self.modeling_widget.updateGeometry()
+        self.modeling_scroll_area.updateGeometry()
+        self.animation_widget.updateGeometry()
+        self.animation_scroll_area.updateGeometry()
+        self.graph_widget.updateGeometry()
+        self.graph_scroll_area.updateGeometry()
+    
     #----------------------------------------------------------------------------------
     # Window event handlers
     #----------------------------------------------------------------------------------
@@ -360,16 +548,20 @@ class ToolBoxWindow(QtWidgets.QWidget):
         if event.button() == QtCore.Qt.LeftButton:
             self.dragging = True
             self.offset = event.globalPos() - self.pos()
+            event.accept()
+
         UT.maya_main_window().activateWindow()
     
     def mouseMoveEvent(self, event):
         # Only handle events that occur outside the frame
         if event.buttons() == QtCore.Qt.LeftButton and self.dragging:
             self.move(event.globalPos() - self.offset)
+            event.accept()
     
     def mouseReleaseEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             self.dragging = False
+            event.accept()
         UT.maya_main_window().activateWindow()
     
     def resizeEvent(self, event):
@@ -390,9 +582,15 @@ class ToolBoxWindow(QtWidgets.QWidget):
         if was_below_threshold != is_below_threshold:
             # We've crossed the threshold, update the layout
             self.modeling_layout.horizontal_priority = is_below_threshold
+            self.animation_layout.horizontal_priority = is_below_threshold
+            self.graph_layout.horizontal_priority = is_below_threshold
             # Force layout update
             self.modeling_widget.updateGeometry()
             self.modeling_scroll_area.updateGeometry()
+            self.animation_widget.updateGeometry()
+            self.animation_scroll_area.updateGeometry()
+            self.graph_widget.updateGeometry()
+            self.graph_scroll_area.updateGeometry()
         
         # Store the current height for next comparison
         self.last_height = current_height 
@@ -603,6 +801,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
                 while QtWidgets.QApplication.overrideCursor() is not None:
                     QtWidgets.QApplication.restoreOverrideCursor()
         
+        UT.maya_main_window().activateWindow()
         return True
     
     def _handle_frame_drag_or_resize(self, event):
@@ -622,7 +821,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
             # Handle dragging
             self.move(event.globalPos() - self.offset)
             return True  # Event handled
-            
+        
+        UT.maya_main_window().activateWindow()
         return False
     
     def _handle_frame_mouse_press(self, event):
@@ -661,6 +861,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
                 
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.ClosedHandCursor)
             
+        UT.maya_main_window().activateWindow()
         return True  # Event handled
     
     def _handle_frame_mouse_release(self, event):
@@ -700,7 +901,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
         
         if was_resizing or was_dragging:
             return True  # Event handled
-            
+        
+        UT.maya_main_window().activateWindow()
         return False
     
     def _handle_frame_mouse_leave(self, event):
@@ -720,7 +922,9 @@ class ToolBoxWindow(QtWidgets.QWidget):
             self._reset_cursor()
             
             self.resize_edge = None
+        UT.maya_main_window().activateWindow()
         return True  # Event handled
+        
     
     def _reset_cursor(self):
         """Reset cursor to default arrow cursor"""

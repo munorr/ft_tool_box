@@ -552,3 +552,192 @@ def break_connections():
     mel.eval('channelBoxCommand -break;')
 
 #---------------------------------------------------------------------------------------------------------------
+def center_pivot():
+    mel.eval('''CenterPivot;''')
+    
+def delete_history():
+    mel.eval('''DeleteHistory;''')
+
+def freeze_transformation():
+    cmds.makeIdentity(apply=True, translate=True, rotate=True, scale=True, normal=False, preserveNormals=True)
+
+def freeze_translate():
+    cmds.makeIdentity(apply=True, translate=True, rotate=False, scale=False, normal=False, preserveNormals=True)
+
+def freeze_rotate():
+    cmds.makeIdentity(apply=True, translate=False, rotate=True, scale=False, normal=False, preserveNormals=True)
+
+def freeze_scale():
+    cmds.makeIdentity(apply=True, translate=False, rotate=False, scale=True, normal=False, preserveNormals=True)
+
+def object_to_world_origin():
+    mel.eval('''
+                string $obj[] = `ls -sl`;
+                move -rpr 0 0 0 $obj;
+                ''')
+
+def pivot_to_world_origin_old(): #pivot to custom loactor stored position
+    selected_objects = cmds.ls(selection=True, long=True)
+    if not cmds.objExists('storedPositionLocator'):
+        create_loc_object('storedPositionLocator')
+        #cmds.spaceLocator(name='storedPositionLocator')
+        cmds.setAttr('storedPositionLocator.visibility', 0)
+
+    source_pivot = cmds.xform('storedPositionLocator', q=True, ws=True, rp=True)
+
+    for obj in selected_objects:
+        cmds.xform(obj, ws=True, piv=source_pivot)
+    cmds.select(selected_objects)
+    #cmds.xform(ws=True, piv=(0, 0, 0))
+    #mel.eval('''xform -ws -piv 0 0 0;''')
+
+def pivot_to_world_origin(self): #pivot to stored position
+    selected_objects = cmds.ls(selection=True, long=True)
+    default_set = 'defaultObjectSet'
+    
+    # Check if the 'Stored Location' attribute exists, if not, create it
+    if not cmds.attributeQuery('Stored_Location', node=default_set, exists=True):
+        cmds.addAttr(default_set, longName='Stored_Location', attributeType='double3')
+        cmds.addAttr(default_set, longName='Stored_Location_X', attributeType='double', parent='Stored_Location')
+        cmds.addAttr(default_set, longName='Stored_Location_Y', attributeType='double', parent='Stored_Location')
+        cmds.addAttr(default_set, longName='Stored_Location_Z', attributeType='double', parent='Stored_Location')
+
+    # Get the stored position
+    stored_position = cmds.getAttr(f'{default_set}.Stored_Location')[0]
+
+    # Check if there are any objects selected
+    if not selected_objects:
+        cmds.warning("Please select at least one object to move its pivot.")
+        return
+
+    source_pivot = [stored_position[0], stored_position[1], stored_position[2]]
+
+    # Loop through the selected objects and set their pivots to the stored position
+    for obj in selected_objects:
+        cmds.xform(obj, ws=True, piv=source_pivot)
+    cmds.select(selected_objects)
+
+@undoable
+def selected_pivot_to_active_pivot_pos():
+    # Get the selected objects
+    selected_objects = cmds.ls(selection=True)
+
+    # Check if there are at least two objects selected
+    if len(selected_objects) > 1:
+        # Get the last selected object (active object)
+        active_object = selected_objects[-1]
+        
+        # Get the pivot position of the active object
+        pivot_position = cmds.xform(active_object, query=True, worldSpace=True, rotatePivot=True)
+        
+        # Loop through the other selected objects and set their pivots to the active object's pivot
+        for obj in selected_objects[:-1]:
+            cmds.xform(obj, worldSpace=True, pivots=pivot_position)
+        cmds.select(selected_objects[:-1], replace=True)
+    else:
+        cmds.warning("Please select at least two objects.")
+
+@undoable
+def selected_pivot_to_active_pivot_ori():
+    sel = cmds.ls(sl=True)
+    #mel.eval('MatchPivots;')
+    
+    source = sel[-1]
+    wso = mel.eval(f'xform -q -ws -ro {source};')
+    wsp = cmds.xform(source, query=True, worldSpace=True, rotatePivot=True)
+    
+    target = sel[:-1]
+    cmds.select(target, replace = True)
+    mel.eval(f'manipPivot -o {wso[0]} {wso[1]} {wso[2]};')
+    mel.eval('BakeCustomPivot;')
+
+@undoable
+def selected_pivot_to_active_pivot_all():
+    sel = cmds.ls(sl=True)
+    mel.eval('MatchPivots;')
+    
+    source = sel[-1]
+    wso = mel.eval(f'xform -q -ws -ro {source};')
+    wsp = cmds.xform(source, query=True, worldSpace=True, rotatePivot=True)
+    
+    target = sel[:-1]
+    cmds.select(target, replace = True)
+    mel.eval(f'manipPivot -o {wso[0]} {wso[1]} {wso[2]};')
+    mel.eval('BakeCustomPivot;')
+
+@undoable
+def copy_joint_pivot():
+    sel = cmds.ls(sl=True)
+    
+    # Check if we have at least 2 objects selected
+    if len(sel) < 2:
+        print("Please select at least 2 objects")
+        return
+        
+    # Process in pairs
+    for i in range(0, len(sel)-1, 2):
+        obj = sel[i]
+        objGrp = cmds.listRelatives(obj, parent=True)[0]
+        jnt = sel[i+1]
+        
+        # Perform operations for this pair
+        cmds.select(clear=True)
+        cmds.select([objGrp, jnt])
+        self.selected_pivot_to_active_pivot_all()
+        
+        cmds.select(clear=True)
+        cmds.select(obj)
+        self.freeze_transformation()
+        
+        cmds.select(clear=True)
+        cmds.select([obj, jnt])
+        self.selected_pivot_to_active_pivot_pos()
+        
+        cmds.select(clear=True)
+        cmds.select(obj)
+    
+    # Reselect all original objects at the end
+    #cmds.select(sel)
+
+
+@undoable
+def object_to_active_position():
+    selected_objects = cmds.ls(selection=True, long=True)
+
+    if len(selected_objects) > 1:
+        active_object = selected_objects[-1]
+        
+        # Get the position of the active object
+        active_position = cmds.xform(active_object, query=True, worldSpace=True, rotatePivot=True)
+        
+        # Loop through the other selected objects and set their positions to the active object's position
+        for obj in selected_objects[:-1]:
+            if obj != active_object:
+                # Get the current world space rotate pivot of the object
+                current_position = cmds.xform(obj, query=True, worldSpace=True, rotatePivot=True)
+                
+                # Calculate the difference between the stored position and current position
+                offset = [active_position[i] - current_position[i] for i in range(3)]
+                
+                # Move the object by the calculated offset
+                cmds.move(offset[0], offset[1], offset[2], obj, relative=True, worldSpace=True)
+
+        cmds.select(selected_objects[:-1], replace=True)
+    else:
+        cmds.warning("Please select at least two objects.")
+#-----------------------------------------------
+def match_move():
+    mel.eval('''MatchTranslation;''')
+
+def match_rotate():
+    mel.eval('''MatchRotation;''')
+
+def match_scale():
+    mel.eval('''MatchScaling;''')
+
+def match_all():
+    mel.eval('''MatchTransform;''')
+#---------------------------------------------------------------------------------------------------------------
+
+
+

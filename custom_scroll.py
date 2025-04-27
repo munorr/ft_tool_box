@@ -43,8 +43,9 @@ class CustomScrollArea(QtWidgets.QScrollArea):
         delta_x = event.angleDelta().x()
         
         # Make scrolling more responsive but not too fast
-        scroll_y = delta_y // 7  # Adjust this value to control sensitivity
-        scroll_x = delta_x // 7  # Adjust this value to control sensitivity
+        sensitivity_factor = 10  # Higher value = less sensitive scrolling
+        scroll_y = delta_y // sensitivity_factor  # Reduced sensitivity for vertical scrolling
+        scroll_x = delta_x // sensitivity_factor  # Same reduced sensitivity for horizontal scrolling
         
         # Handle scrolling based on inversion setting and alt key
         if self.invert_primary:
@@ -61,6 +62,7 @@ class CustomScrollArea(QtWidgets.QScrollArea):
                 # Check if scrolling is possible, even if scrollbar is hidden
                 if hbar.maximum() > 0:
                     # Use vertical delta for horizontal scrolling (more common in mice)
+                    # Using the same reduced sensitivity as vertical scrolling
                     hbar.setValue(hbar.value() - scroll_y)
                     event.accept()
                     return
