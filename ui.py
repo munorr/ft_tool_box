@@ -2,6 +2,7 @@ import os
 from functools import partial
 import maya.cmds as cmds
 from pathlib import Path
+import uuid
 
 try:
     from PySide6 import QtWidgets, QtCore, QtGui
@@ -24,6 +25,7 @@ from . import custom_scroll as CS
 from . import custom_layout as CL
 from . import create_shape as CSP
 from . import fade_away_logic as FA
+from . import toggle_db
 
 class ToolBoxWindow(QtWidgets.QWidget):
     def __init__(self, parent=None, title="Tool Box"):
@@ -43,6 +45,12 @@ class ToolBoxWindow(QtWidgets.QWidget):
 
         # Set minimum size to 70x30 as requested
         self.setMinimumSize(100, 70)
+        
+        # Initialize toggle button database
+        self.toggle_db = toggle_db.ToggleButtonDatabase()
+        self.toggle_buttons = {}
+        self.custom_widgets = {}
+        
         self.setup_ui()
         self.setup_connections()
 
@@ -100,6 +108,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
         #self.util_button.addToMenu('Close', self.close, icon="closeTabButton.png", position=(0,0))
         self.util_button.addToMenu('Horizontal', self.horizontal_window, icon="loadToolBox.png", position=(0,0))
         self.util_button.addToMenu('Vertical', self.vertical_window, icon="loadToolBox.png", position=(1,0))
+        self.util_button.addToMenu('Add Tab', self.add_toggle_button, icon="loadToolBox.png", position=(2,0))
+        self.util_button.addToMenu('Remove Tab', self.remove_toggle_button, icon="loadToolBox.png", position=(3,0))
         
         # Track current layout orientation
         self.is_horizontal_layout = True
@@ -116,25 +126,24 @@ class ToolBoxWindow(QtWidgets.QWidget):
         tbh = 12
         tbr = 6
         
-        self.model_toggle_button = CB.CustomToggleButton(text='1', button_id=0, group_id="widget_stack", checked_color='#5285A6', tooltip="Modeling Tools", border_radius=tbr, width=tbw, height=tbh)
-        self.animation_toggle_button = CB.CustomToggleButton(text='2', button_id=1, group_id="widget_stack", checked_color='#5285A6', tooltip="Animation Tools", border_radius=tbr, width=tbw, height=tbh)
-        self.graph_toggle_button = CB.CustomToggleButton(text='3', button_id=2, group_id="widget_stack", checked_color='#5285A6', tooltip="Graph Editor Tools", border_radius=tbr, width=tbw, height=tbh)
-        self.new_custom_tab_button = CB.CustomToggleButton(text='4', button_id=3, group_id="widget_stack", checked_color='#6a993e',unchecked_color='#798b61',hover_color='#84bf4d', tooltip="New Custom Tab", border_radius=2, width=tbw, height=tbh)
-
+        # Create toggle buttons from database
+        self.create_toggle_buttons(tbw, tbh, tbr)
+        
         self.close_button = CB.CustomButton(text="✕", width=tbw, height=tbh, color="#ff0000", textColor="rgba(255, 255, 255, 0.9)",text_size=6, tooltip="Close Tool Box", radius=tbr)
         self.close_button.singleClicked.connect(self.close)
 
         self.body_header_layout.addStretch()
-        self.body_header_layout.addWidget(self.model_toggle_button)
-        self.body_header_layout.addWidget(self.animation_toggle_button)
-        self.body_header_layout.addWidget(self.graph_toggle_button)
-        self.body_header_layout.addSpacing(2)
-        self.body_header_layout.addWidget(self.new_custom_tab_button)
+        
+        # Add toggle buttons to layout
+        for button_id in sorted(self.toggle_buttons.keys()):
+            self.body_header_layout.addWidget(self.toggle_buttons[button_id])
+            
         self.body_header_layout.addSpacing(10)
         self.body_header_layout.addWidget(self.close_button)
 
         # Initially check the first button to show the first widget
-        self.model_toggle_button.setChecked(True)
+        if 0 in self.toggle_buttons:
+            self.toggle_buttons[0].setChecked(True)
         #-----------------------------------------------------------------------------------------------------------------------------
         # Scrollbar style
         def apply_transparent_scroll_style(widget):
@@ -395,9 +404,15 @@ class ToolBoxWindow(QtWidgets.QWidget):
         # Stacked Widget
         self.content_widget = QtWidgets.QStackedWidget()
         self.content_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 0px;")
-        self.content_widget.addWidget(self.modeling_scroll_area)
-        self.content_widget.addWidget(self.animation_scroll_area)
-        self.content_widget.addWidget(self.graph_scroll_area)
+        
+        # Store references to default widgets
+        self.custom_widgets["modeling_scroll_area"] = self.modeling_scroll_area
+        self.custom_widgets["animation_scroll_area"] = self.animation_scroll_area
+        self.custom_widgets["graph_scroll_area"] = self.graph_scroll_area
+        
+        # Add widgets to stacked widget based on database order
+        self.update_content_widget()
+        
         # Add the content widget to the frame layout
         self.frame_layout.addWidget(self.content_widget)
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -413,12 +428,16 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.last_height = self.height()
     
     def setup_connections(self):
-        self.model_toggle_button.toggled_with_id.connect(self.switch_widget)
-        self.animation_toggle_button.toggled_with_id.connect(self.switch_widget)
-        self.graph_toggle_button.toggled_with_id.connect(self.switch_widget)
-        self.content_widget.setCurrentIndex(self.model_toggle_button.button_id)
+        # Connect all toggle buttons to switch_widget
+        for button_id, button in self.toggle_buttons.items():
+            button.toggled_with_id.connect(self.switch_widget)
+        
+        # Set initial content widget
+        if self.toggle_buttons and 0 in self.toggle_buttons:
+            self.content_widget.setCurrentIndex(0)
         
     def switch_widget(self, checked, button_id):
+        """Switch the current widget based on the toggle button ID"""
         if checked:
             self.content_widget.setCurrentIndex(button_id)
     
@@ -569,38 +588,730 @@ class ToolBoxWindow(QtWidgets.QWidget):
         
         This method detects when the window crosses the height threshold of 65 pixels
         and adjusts the modeling layout's horizontal priority accordingly.
+        It also updates function button layouts based on window orientation.
         """
-        super(ToolBoxWindow, self).resizeEvent(event)
-      
         current_height = self.height()
-        height_threshold = 75
+        current_width = self.width()
+        is_horizontal = current_width > current_height
         
-        # Check if we've crossed the threshold in either direction
-        was_below_threshold = self.last_height <= height_threshold
-        is_below_threshold = current_height <= height_threshold
+        # Check if we've crossed the threshold (65 pixels)
+        if hasattr(self, 'last_height'):
+            was_below_threshold = self.last_height < 65
+            is_below_threshold = current_height < 65
+            
+            if was_below_threshold != is_below_threshold:
+                # We've crossed the threshold, update the layout
+                self.modeling_layout.horizontal_priority = is_below_threshold
+                self.animation_layout.horizontal_priority = is_below_threshold
+                self.graph_layout.horizontal_priority = is_below_threshold
+                # Force layout update
+                self.modeling_widget.updateGeometry()
+                self.modeling_scroll_area.updateGeometry()
+                self.animation_widget.updateGeometry()
+                self.animation_scroll_area.updateGeometry()
+                self.graph_widget.updateGeometry()
+                self.graph_scroll_area.updateGeometry()
         
-        if was_below_threshold != is_below_threshold:
-            # We've crossed the threshold, update the layout
-            self.modeling_layout.horizontal_priority = is_below_threshold
-            self.animation_layout.horizontal_priority = is_below_threshold
-            self.graph_layout.horizontal_priority = is_below_threshold
-            # Force layout update
-            self.modeling_widget.updateGeometry()
-            self.modeling_scroll_area.updateGeometry()
-            self.animation_widget.updateGeometry()
-            self.animation_scroll_area.updateGeometry()
-            self.graph_widget.updateGeometry()
-            self.graph_scroll_area.updateGeometry()
+        # Check if orientation has changed and update function button layouts
+        if hasattr(self, 'last_orientation') and self.last_orientation != is_horizontal:
+            self.update_function_button_layouts(is_horizontal)
         
-        # Store the current height for next comparison
-        self.last_height = current_height 
+        # Store current values for next comparison
+        self.last_height = current_height
+        self.last_orientation = is_horizontal 
     
     def closeEvent(self, event):
         """Override closeEvent to properly clean up Maya window reference"""
+        # Save the database before closing to ensure all changes are saved
+        self.toggle_db.save_database()
+        
         # Delete the window from Maya's window list if it exists
         window_name = self.objectName()
         if window_name and cmds.window(window_name, exists=True):
             cmds.deleteUI(window_name, window=True)
+    
+    #----------------------------------------------------------------------------------
+    # Function Button System
+    #----------------------------------------------------------------------------------
+    def add_function_button(self, tab_id, text="Function", script="", color="#5285A6"):
+        """Add a function button to a custom tab"""
+        # Get the content widget for this tab
+        widget_name = None
+        for tab in self.toggle_db.get_toggle_buttons():
+            if tab["id"] == tab_id:
+                widget_name = tab["widget_name"]
+                break
+        
+        if not widget_name or widget_name not in self.custom_widgets:
+            print(f"Error: Could not find widget for tab ID {tab_id}")
+            return
+        
+        # Get the content widget from the scroll area
+        scroll_area = self.custom_widgets[widget_name]
+        content_widget = scroll_area.widget()
+        
+        if not hasattr(content_widget, "button_layout"):
+            print(f"Error: Content widget does not have a button layout")
+            return
+        
+        # Get the next available function button ID
+        button_id = self.toggle_db.get_next_function_id()
+        
+        # Create button data
+        button_data = {
+            "id": button_id,
+            "tab_id": tab_id,
+            "text": text,
+            "script": script,
+            "script_type": "python",
+            "color": color
+        }
+        
+        # Add to database
+        self.toggle_db.add_function_button(button_data)
+        
+        # Create the button
+        self._create_function_button(content_widget, button_data)
+        
+        # Open the script manager to edit the script
+        '''from . import script_manager
+        script_widget = script_manager.ScriptManagerWidget(self)
+        script_widget.set_current_button_data(button_data)
+        script_widget.script_updated.connect(self.update_button_script)
+        script_widget.show()
+        
+        # Position the script manager near the button
+        pos = QtGui.QCursor.pos()
+        script_widget.move(pos.x() + 20, pos.y())'''
+    
+    def _create_function_button(self, content_widget, button_data):
+        """Create a function button and add it to the content widget"""
+        # Create the button
+        button = CB.CustomFunctionButton(
+            text=button_data["text"],
+            button_id=button_data["id"],
+            script=button_data["script"],
+            color=button_data["color"],
+            parent=content_widget
+        )
+        
+        if "script_type" in button_data:
+            button.script_type = button_data["script_type"]
+            
+        # Connect signals
+        button.script_manager_requested.connect(self.open_script_manager_for_button_id)
+        button.delete_requested.connect(self.remove_function_button)
+        button.renamed.connect(self.update_function_button_name)
+        button.color_changed.connect(self.update_function_button_color)
+        
+        # Get the button layout
+        button_layout = content_widget.button_layout
+        
+        # Simply add the button to the layout - QHBoxLayout/QVBoxLayout handle positioning automatically
+        button_layout.addWidget(button)
+    
+    def load_function_buttons(self, tab_id, content_widget):
+        """Load function buttons for a specific tab"""
+        # Get function buttons for this tab
+        buttons = self.toggle_db.get_function_buttons_for_tab(tab_id)
+        
+        # Create buttons
+        for button_data in buttons:
+            self._create_function_button(content_widget, button_data)
+    
+    def remove_function_button(self, button_id):
+        """Remove a function button"""
+        # Remove from database
+        self.toggle_db.remove_function_button(button_id)
+        # Save the database to ensure changes are persisted
+        self.toggle_db.save_database()
+        
+        # Find and remove the button from UI
+        # (The button will remove itself from the layout when deleted)
+        
+    def open_script_manager_for_button_id(self, button_id):
+        """Open script manager for an existing function button"""
+        # Get the button data from the database
+        button_data = None
+        for btn in self.toggle_db.get_function_buttons():
+            if btn["id"] == button_id:
+                button_data = btn
+                break
+        
+        if button_data:
+            # Open the script manager
+            from . import script_manager
+            script_widget = script_manager.ScriptManagerWidget(self)
+            script_widget.set_current_button_data(button_data)
+            script_widget.script_updated.connect(self.update_button_script)
+            script_widget.show()
+            
+            # Position the script manager near the cursor
+            pos = QtGui.QCursor.pos()
+            script_widget.move(pos.x() + 20, pos.y())
+    
+    def update_button_script(self, button_data):
+        """Update a function button's script and save to the database"""
+        # Update the database
+        self.toggle_db.update_function_button(button_data)
+        # Save the database to ensure changes are persisted
+        self.toggle_db.save_database()
+        
+        # Find the button in the UI and update its script
+        button_id = button_data["id"]
+        tab_id = button_data["tab_id"]
+        
+        # Find the button and update only its script
+        button = self._find_function_button(button_id, tab_id)
+        if button:
+            button.set_script(button_data["script"], button_data.get("script_type", "python"))
+            
+    def _find_function_button(self, button_id, tab_id=None):
+        """Helper method to find a function button by ID"""
+        # If tab_id is not provided, search all tabs
+        tabs_to_search = [tab for tab in self.toggle_db.get_toggle_buttons() 
+                         if tab_id is None or tab["id"] == tab_id]
+        
+        for tab in tabs_to_search:
+            widget_name = tab["widget_name"]
+            if widget_name in self.custom_widgets:
+                content_widget = self.custom_widgets[widget_name].widget()
+                
+                # Find the button in the layout
+                if hasattr(content_widget, "button_layout"):
+                    layout = content_widget.button_layout
+                    for i in range(layout.count()):
+                        item = layout.itemAt(i)
+                        if item and item.widget() and isinstance(item.widget(), CB.CustomFunctionButton):
+                            if item.widget().button_id == button_id:
+                                return item.widget()
+        return None
+    
+    def update_function_button_name(self, button_id, new_name):
+        """Update a function button's name in the database and UI"""
+        # Update database
+        updated = False
+        for tab in self.toggle_db.get_toggle_buttons():
+            if "buttons" in tab:
+                for button in tab["buttons"]:
+                    if button["id"] == button_id:
+                        button["text"] = new_name
+                        updated = True
+                        break
+                if updated:
+                    break
+                    
+        if updated:
+            self.toggle_db.save_database()
+            
+        # No need to update UI since the signal is emitted by the button itself
+        # which already updated its text
+                        
+    def update_function_button_color(self, button_id, new_color):
+        """Update a function button's color in the database and UI"""
+        # Update database
+        updated = False
+        for tab in self.toggle_db.get_toggle_buttons():
+            if "buttons" in tab:
+                for button in tab["buttons"]:
+                    if button["id"] == button_id:
+                        button["color"] = new_color
+                        updated = True
+                        break
+                if updated:
+                    break
+                    
+        if updated:
+            self.toggle_db.save_database()
+            
+        # No need to update UI since the signal is emitted by the button itself
+        # which already updated its color
+    
+    def update_function_button_layouts(self, is_horizontal):
+        """Update function button layouts based on window orientation"""
+        # Loop through all custom tabs
+        for tab in self.toggle_db.get_toggle_buttons():
+            # Skip default tabs
+            if tab["id"] <= 2:
+                continue
+                
+            widget_name = tab["widget_name"]
+            if widget_name not in self.custom_widgets:
+                continue
+                
+            scroll_area = self.custom_widgets[widget_name]
+            content_widget = scroll_area.widget()
+            
+            if not hasattr(content_widget, "button_layout") or not hasattr(content_widget, "is_horizontal"):
+                continue
+                
+            # Skip if orientation hasn't changed
+            if content_widget.is_horizontal == is_horizontal:
+                continue
+                
+            # Update orientation flag
+            content_widget.is_horizontal = is_horizontal
+            
+            # Get all buttons from the current layout
+            old_layout = content_widget.button_layout
+            buttons = []
+            for i in range(old_layout.count()):
+                item = old_layout.itemAt(i)
+                if item and item.widget():
+                    buttons.append(item.widget())
+            
+            # Remove old layout from main layout
+            main_layout = content_widget.layout()
+            if main_layout and old_layout:
+                main_layout.removeItem(old_layout)
+                
+                # Delete old layout by reparenting its widgets
+                while old_layout.count():
+                    item = old_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().setParent(None)
+            
+            # Create new layout based on orientation
+            if is_horizontal:
+                new_layout = QtWidgets.QHBoxLayout()
+            else:
+                new_layout = QtWidgets.QVBoxLayout()
+                
+            new_layout.setContentsMargins(0, 0, 0, 0)
+            new_layout.setSpacing(4)
+            new_layout.setAlignment(QtCore.Qt.AlignCenter)
+            
+            # Add all buttons to the new layout
+            for button in buttons:
+                new_layout.addWidget(button)
+            
+            # Add the new layout to the main layout
+            if main_layout:
+                main_layout.addLayout(new_layout)
+            
+            # Update the reference to the button layout
+            content_widget.button_layout = new_layout
+    #----------------------------------------------------------------------------------
+    # Tab System
+    #----------------------------------------------------------------------------------  
+    def create_toggle_buttons(self, width, height, border_radius):
+        """Create toggle buttons from the database"""
+        # Clear existing toggle buttons
+        self.toggle_buttons = {}
+        
+        # Create toggle buttons from database
+        for button_data in self.toggle_db.get_toggle_buttons():
+            button_id = button_data["id"]
+            
+            # Use the button's stored border radius if available, otherwise use default
+            button_border_radius = button_data.get("border_radius", border_radius)
+            
+            button = CB.CustomToggleButton(
+                text=button_data["text"],
+                button_id=button_id,
+                group_id="widget_stack",
+                checked_color=button_data["checked_color"],
+                unchecked_color=button_data["unchecked_color"],
+                hover_color=button_data["hover_color"],
+                tooltip=button_data["tooltip"],
+                border_radius=button_border_radius,
+                width=width,
+                height=height
+            )
+            self.toggle_buttons[button_id] = button
+    
+    def update_content_widget(self):
+        """Update the content widget with widgets from the database"""
+        # Clear the stacked widget
+        while self.content_widget.count() > 0:
+            self.content_widget.removeWidget(self.content_widget.widget(0))
+        
+        # Add widgets in the order defined by the database
+        for tab in sorted(self.toggle_db.get_toggle_buttons(), key=lambda x: x["id"]):
+            widget_name = tab["widget_name"]
+            button_id = tab["id"]
+            
+            # Check if this is a default widget or a custom widget
+            if widget_name in ["modeling_scroll_area", "animation_scroll_area", "graph_scroll_area"]:
+                # Default widget - should already be in self.custom_widgets
+                if widget_name in self.custom_widgets:
+                    index = self.content_widget.addWidget(self.custom_widgets[widget_name])
+            else:
+                # Custom widget - might need to be recreated
+                if widget_name not in self.custom_widgets:
+                    # Create a default empty widget for custom tabs
+                    self._create_empty_widget(button_id, widget_name)
+                
+                # Add the widget to the stacked widget
+                index = self.content_widget.addWidget(self.custom_widgets[widget_name])
+                
+            # Verify that the index matches the button_id
+            if index != button_id:
+                print(f"Warning: Widget index {index} does not match button_id {button_id}")
+    
+    def add_toggle_button(self, text=None, tooltip= 'Custom Tab', checked_color="#84bf4d", unchecked_color="#798b61", 
+                         hover_color="#84bf4d", widget=None, widget_name=None, border_radius=2):
+        """Add a new toggle button to the body_header_layout"""
+        # Get next available ID
+        button_id = self.toggle_db.get_next_id()
+        
+        # Auto-generate text if not provided (use sequential numbering: 4, 5, 6, etc.)
+        if text is None:
+            text = str(button_id + 1)  # +1 because IDs start at 0 but we want to display starting from 1
+        
+        # Create button data
+        button_data = {
+            "id": button_id,
+            "text": text,
+            "tooltip": tooltip,
+            "checked_color": checked_color,
+            "unchecked_color": unchecked_color,
+            "hover_color": hover_color,
+            "widget_name": widget_name or f"custom_widget_{button_id}",
+            "border_radius": border_radius,
+            "buttons": []  # Initialize with empty buttons array
+        }
+        
+        # Add to database
+        self.toggle_db.add_toggle_button(button_data)
+        
+        # Create button
+        tbw = 12
+        tbh = 12
+        tbr = 6
+        button = CB.CustomToggleButton(
+            text=text,
+            button_id=button_id,
+            group_id="widget_stack",
+            checked_color=checked_color,
+            unchecked_color=unchecked_color,
+            hover_color=hover_color,
+            tooltip=tooltip,
+            border_radius=border_radius,
+            width=tbw,
+            height=tbh
+        )
+        
+        # Store button
+        self.toggle_buttons[button_id] = button
+        
+        def apply_transparent_scroll_style(widget):
+            widget.setStyleSheet("""
+                QScrollArea {
+                    background-color: transparent;
+                    border: none;
+                }
+                QScrollBar:horizontal {
+                    border: none;
+                    background: transparent;
+                    height: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-width: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-height: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    width: 0px;
+                }
+            """)
+
+        # Add widget to custom_widgets
+        if widget:
+            self.custom_widgets[button_data["widget_name"]] = widget
+            apply_transparent_scroll_style(widget)
+        else:
+            # Create a default empty widget if none provided
+            self._create_empty_widget(button_id, button_data["widget_name"])
+            apply_transparent_scroll_style(self.custom_widgets[button_data["widget_name"]])
+        
+        # Disconnect all toggle buttons first to avoid multiple connections
+        for btn in self.toggle_buttons.values():
+            try:
+                btn.toggled_with_id.disconnect(self.switch_widget)
+            except:
+                pass  # It's okay if it wasn't connected
+        
+        # Clear and rebuild header layout
+        for i in reversed(range(self.body_header_layout.count())):
+            item = self.body_header_layout.itemAt(i)
+            if item.widget():
+                self.body_header_layout.removeWidget(item.widget())
+        
+        # Add buttons back to layout
+        self.body_header_layout.addStretch()
+        for btn_id in sorted(self.toggle_buttons.keys()):
+            self.body_header_layout.addWidget(self.toggle_buttons[btn_id])
+            self.toggle_buttons[btn_id].toggled_with_id.connect(self.switch_widget)
+        
+        self.body_header_layout.addSpacing(10)
+        self.body_header_layout.addWidget(self.close_button)
+        
+        # Update content widget
+        self.update_content_widget()
+        
+        # Set the new button as checked to switch to it immediately
+        self.toggle_buttons[button_id].setChecked(True)
+        
+        return button_id
+    
+    def _create_empty_widget(self, button_id, widget_name):
+        """Create a default empty widget for custom tabs with horizontal layout similar to default tabs"""
+        # Create a scroll area with inverted wheel scrolling (vertical wheel = horizontal scroll)
+        scroll_area = CS.CustomScrollArea(invert_primary=True)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll_area.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        
+        # Hide scrollbars but keep scrolling functionality through wheel events
+        scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        def apply_transparent_scroll_style(widget):
+            widget.setStyleSheet("""
+                QScrollArea {
+                    background-color: transparent;
+                    border: none;
+                }
+                QScrollBar:horizontal {
+                    border: none;
+                    background: transparent;
+                    height: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:horizontal {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-width: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                    width: 0px;
+                }
+                QScrollBar:vertical {
+                    border: none;
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px 0px 0px 0px;
+                }
+                QScrollBar::handle:vertical {
+                    background: rgba(100, 100, 100, 0.5);
+                    min-height: 20px;
+                    border-radius: 0px;
+                }
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                    width: 0px;
+                }
+            """)
+
+        # Apply transparent scroll style
+        apply_transparent_scroll_style(scroll_area)
+        
+        # Create a widget to hold the content
+        content_widget = QtWidgets.QWidget()
+        content_widget.button_id = button_id  # Store button_id for reference
+        content_widget.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
+        content_widget.setStyleSheet("background-color: rgba(36, 36, 36, 0);border:none;border-radius: 4px;")
+        
+        # Create a horizontal layout similar to the default tabs
+        main_layout = QtWidgets.QHBoxLayout(content_widget)
+        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setAlignment(QtCore.Qt.AlignCenter)
+        
+        # Add a header layout for the add button (on the left side)
+        header_layout = QtWidgets.QVBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(4)
+        #header_layout.setAlignment(QtCore.Qt.AlignTop | QtCore.Qt.AlignHCenter)
+        
+        # Add a button to add function buttons
+        add_button = CB.CustomButton(text="+",tooltip="Add Function Button",size=14,width=20,height=20, radius=10, color="#84bf4d")
+        add_button.clicked.connect(lambda: self.add_function_button(button_id))
+        
+        # Add button to header layout
+        #header_layout.addWidget(add_button)
+        #header_layout.addStretch(1)
+        
+        # Add the header layout to the main layout
+        #main_layout.addLayout(header_layout)
+        #main_layout.addWidget(add_button)
+        
+        # Create a flow layout for function buttons - default is horizontal
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        button_layout.setSpacing(4)
+        button_layout.setAlignment(QtCore.Qt.AlignCenter)
+        content_widget.button_layout = button_layout  # Store reference for adding buttons later
+        
+        button_layout.addWidget(add_button)
+
+        # Store current orientation
+        content_widget.is_horizontal = self.width() > self.height()
+        
+        # Add the button layout to the main layout
+        main_layout.addLayout(button_layout)
+        
+        # Set the content widget as the scroll area's widget
+        scroll_area.setWidget(content_widget)
+        
+        # Store the widget
+        self.custom_widgets[widget_name] = scroll_area
+        
+        # Load function buttons for this tab
+        self.load_function_buttons(button_id, content_widget)
+        
+    def remove_toggle_button_by_id(self, button_id):
+        """Remove a toggle button from the body_header_layout by its ID"""
+        # Check if button exists
+        if button_id not in self.toggle_buttons:
+            return False
+            
+        # Check if this is a default tab (IDs 0, 1, 2 are default)
+        if button_id <= 2:
+            # Show a message that default tabs cannot be removed
+            cmds.warning("Cannot remove default tabs. Only custom tabs can be removed.")
+            return False
+            
+        # Remove from database
+        self.toggle_db.remove_toggle_button(button_id)
+    
+    def remove_toggle_button(self):
+        """Remove the currently active toggle button if it's a custom tab"""
+        # Get the current active button ID (current index of the stacked widget)
+        current_id = self.content_widget.currentIndex()
+        
+        # Find which button is currently checked
+        checked_button_id = None
+        for btn_id, btn in self.toggle_buttons.items():
+            if btn.isChecked():
+                checked_button_id = btn_id
+                break
+        
+        # Use the checked button ID if found, otherwise use current index
+        if checked_button_id is not None:
+            current_id = checked_button_id
+        
+        # Check if this is a default tab (IDs 0, 1, 2 are default)
+        if current_id <= 2:
+            # Show a message that default tabs cannot be removed
+            cmds.warning("Cannot remove default tabs. Only custom tabs can be removed.")
+            return False
+        
+        # Check if button exists
+        if current_id not in self.toggle_buttons:
+            cmds.warning(f"Button with ID {current_id} not found.")
+            return False
+        
+        # Get the widget name before removing from database
+        widget_name = None
+        for button_data in self.toggle_db.get_toggle_buttons():
+            if button_data["id"] == current_id:
+                widget_name = button_data["widget_name"]
+                break
+        
+        # Remove from database
+        self.toggle_db.remove_toggle_button(current_id)
+        
+        # Remove button from layout
+        button = self.toggle_buttons.pop(current_id)
+        self.body_header_layout.removeWidget(button)
+        button.deleteLater()
+        
+        # Remove widget from custom_widgets if it exists
+        if widget_name and widget_name in self.custom_widgets:
+            widget = self.custom_widgets.pop(widget_name)
+            if widget:
+                widget.deleteLater()
+        
+        # Disconnect all toggle buttons first to avoid multiple connections
+        for btn in self.toggle_buttons.values():
+            try:
+                btn.toggled_with_id.disconnect(self.switch_widget)
+            except:
+                pass  # It's okay if it wasn't connected
+        
+        # Clear and rebuild header layout
+        for i in reversed(range(self.body_header_layout.count())):
+            item = self.body_header_layout.itemAt(i)
+            if item and item.widget():
+                self.body_header_layout.removeWidget(item.widget())
+        
+        # Add buttons back to layout
+        self.body_header_layout.addStretch()
+        for btn_id in sorted(self.toggle_buttons.keys()):
+            self.body_header_layout.addWidget(self.toggle_buttons[btn_id])
+            self.toggle_buttons[btn_id].toggled_with_id.connect(self.switch_widget)
+        
+        self.body_header_layout.addSpacing(10)
+        self.body_header_layout.addWidget(self.close_button)
+        
+        # Update content widget
+        self.update_content_widget()
+        
+        # Activate the first available button
+        if self.toggle_buttons:
+            first_id = min(self.toggle_buttons.keys())
+            self.toggle_buttons[first_id].setChecked(True)
+        
+        return True
+        
+    def remove_toggle_button_by_id(self, button_id):
+        """Remove a toggle button from the body_header_layout by its ID"""
+        # Check if button exists
+        if button_id not in self.toggle_buttons:
+            return False
+        
+        # Check if this is a default tab (IDs 0, 1, 2 are default)
+        if button_id <= 2:
+            # Show a message that default tabs cannot be removed
+            cmds.warning("Cannot remove default tabs. Only custom tabs can be removed.")
+            return False
+        
+        # Remove from database
+        self.toggle_db.remove_toggle_button(button_id)
+        
+        # Remove button from layout
+        button = self.toggle_buttons.pop(button_id)
+        self.body_header_layout.removeWidget(button)
+        button.deleteLater()
+        
+        # Clear and rebuild header layout
+        for i in reversed(range(self.body_header_layout.count())):
+            item = self.body_header_layout.itemAt(i)
+            if item.widget():
+                self.body_header_layout.removeWidget(item.widget())
+        
+        # Add buttons back to layout
+        self.body_header_layout.addStretch()
+        for btn_id in sorted(self.toggle_buttons.keys()):
+            self.body_header_layout.addWidget(self.toggle_buttons[btn_id])
+        
+        self.body_header_layout.addSpacing(10)
+        self.body_header_layout.addWidget(self.close_button)
+        
+        # Update content widget
+        self.update_content_widget()
+        
+        # If we removed the active button, activate the first available button
+        if self.content_widget.currentIndex() == button_id and self.toggle_buttons:
+            first_id = min(self.toggle_buttons.keys())
+            self.toggle_buttons[first_id].setChecked(True)
+        
+        return True
             
         # Call the parent class closeEvent to properly close the Qt window
         super(ToolBoxWindow, self).closeEvent(event)
@@ -696,6 +1407,51 @@ class ToolBoxWindow(QtWidgets.QWidget):
         
         self.setGeometry(new_geometry)
         
+    def mouseMoveEvent(self, event):
+        # Handle dragging
+        if self.dragging and self.offset:
+            self.move(event.globalPos() - self.offset)
+            event.accept()
+            return
+            
+        # Handle resizing
+        if self.resizing and self.resize_edge:
+            global_pos = event.globalPos()
+            new_geometry = self.geometry()
+            
+            if 'right' in self.resize_edge:
+                width = global_pos.x() - new_geometry.left()
+                new_geometry.setWidth(max(self.minimumWidth(), width))
+            if 'bottom' in self.resize_edge:
+                height = global_pos.y() - new_geometry.top()
+                new_geometry.setHeight(max(self.minimumHeight(), height))
+            if 'left' in self.resize_edge:
+                diff = global_pos.x() - new_geometry.left()
+                if new_geometry.width() - diff >= self.minimumWidth():
+                    new_geometry.setLeft(global_pos.x())
+            if 'top' in self.resize_edge:
+                diff = global_pos.y() - new_geometry.top()
+                if new_geometry.height() - diff >= self.minimumHeight():
+                    new_geometry.setTop(global_pos.y())
+                    
+            self.setGeometry(new_geometry)
+            event.accept()
+            return
+            
+    def resizeEvent(self, event):
+        """Handle window resize events and update layouts if orientation changes"""
+        # Call parent class implementation
+        super(ToolBoxWindow, self).resizeEvent(event)
+        
+        # Check if orientation has changed
+        is_horizontal = self.width() > self.height()
+        
+        # Store current orientation to detect changes
+        if not hasattr(self, '_last_orientation') or self._last_orientation != is_horizontal:
+            self._last_orientation = is_horizontal
+            # Update layouts based on new orientation
+            self.update_function_button_layouts(is_horizontal)
+            
     #----------------------------------------------------------------------------------
     # Event filter and handlers
     #----------------------------------------------------------------------------------
@@ -925,7 +1681,6 @@ class ToolBoxWindow(QtWidgets.QWidget):
         UT.maya_main_window().activateWindow()
         return True  # Event handled
         
-    
     def _reset_cursor(self):
         """Reset cursor to default arrow cursor"""
         # Always reset cursor when not on an edge
