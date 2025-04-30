@@ -74,7 +74,7 @@ class FadeAway(QObject):
         menu.setAttribute(QtCore.Qt.WA_TranslucentBackground)
         menu.setStyleSheet('''
         QMenu {
-            background-color: rgba(51, 51, 51, 0);
+            background-color: rgba(30, 30, 30, .9);
             border-radius: 3px;
             padding: 5px;
         }
@@ -89,7 +89,24 @@ class FadeAway(QObject):
             background-color: #111111;
         }''')
 
+        # Add label using QWidgetAction
+        label = QtWidgets.QLabel("Tool Box Frame")
+        #label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setStyleSheet("""
+            QLabel {
+                color: #dddddd;
+                font-size: 12px;
+                padding: 5px;
+                background-color: transparent;
+            }
+        """)
+        
+        # Create a QWidgetAction to hold the label
+        label_action = QtWidgets.QWidgetAction(menu)
+        label_action.setDefaultWidget(label)
+        menu.addAction(label_action)
 
+        # Add toggle fade action
         toggle_fade_action = menu.addAction("Toggle Fade Away")
         toggle_fade_action.setCheckable(True)
         toggle_fade_action.setChecked(self.fade_away_enabled)

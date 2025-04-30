@@ -42,9 +42,13 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.resize_edge = None
         self.resize_range = 8  # Pixels from edge where resizing is active
         self.cursor_override_active = False
+        
+        # Height threshold for determining layout orientation (in pixels)
+        self.HEIGHT_THRESHOLD = 90
 
         # Set minimum size to 70x30 as requested
         self.setMinimumSize(100, 70)
+        self.setMinimumWidth(165)
         
         # Initialize toggle button database
         self.toggle_db = toggle_db.ToggleButtonDatabase()
@@ -106,10 +110,11 @@ class ToolBoxWindow(QtWidgets.QWidget):
         #-----------------------------------------------------------------------------------------------------------------------------
         self.util_button = CB.CustomButton(text="☰",width=20, height=20, radius=3,color="#555555", textColor="#888888", cmHeight=22 ,ContextMenu=True, onlyContext=True, tooltip="Open Util Menu")
         #self.util_button.addToMenu('Close', self.close, icon="closeTabButton.png", position=(0,0))
-        self.util_button.addToMenu('Horizontal', self.horizontal_window, icon="loadToolBox.png", position=(0,0))
-        self.util_button.addToMenu('Vertical', self.vertical_window, icon="loadToolBox.png", position=(1,0))
-        self.util_button.addToMenu('Add Tab', self.add_toggle_button, icon="loadToolBox.png", position=(2,0))
-        self.util_button.addToMenu('Remove Tab', self.remove_toggle_button, icon="loadToolBox.png", position=(3,0))
+        self.util_button.addMenuLabel('Util Menu',position=(0,0))
+        #self.util_button.addToMenu('Horizontal', self.horizontal_window, icon="loadToolBox.png", position=(1,0))
+        #self.util_button.addToMenu('Vertical', self.vertical_window, icon="loadToolBox.png", position=(2,0))
+        self.util_button.addToMenu('Add Tab', self.add_toggle_button, icon="loadToolBox.png", position=(1,0))
+        self.util_button.addToMenu('Remove Tab', self.remove_toggle_button, icon="loadToolBox.png", position=(2,0),color='#cc3333')
         
         # Track current layout orientation
         self.is_horizontal_layout = True
@@ -428,6 +433,13 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.last_height = self.height()
     
     def setup_connections(self):
+        # Disconnect any existing connections first to avoid duplicates
+        for button in self.toggle_buttons.values():
+            try:
+                button.toggled_with_id.disconnect(self.switch_widget)
+            except:
+                pass  # It's okay if it wasn't connected
+        
         # Connect all toggle buttons to switch_widget
         for button_id, button in self.toggle_buttons.items():
             button.toggled_with_id.connect(self.switch_widget)
@@ -457,8 +469,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         y = cursor_position.y() - (window_height // 2)
         self.setGeometry(x, y, window_width, window_height)
         self.last_height = window_height
-        UT.maya_main_window().activateWindow()
-
+        
         # Set all layouts to horizontal direction
         self.modeling_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
         self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter)
@@ -503,6 +514,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.animation_scroll_area.updateGeometry()
         self.graph_widget.updateGeometry()
         self.graph_scroll_area.updateGeometry()
+
+        #UT.maya_main_window().activateWindow()
         
     def vertical_window(self):
         cursor_position = QtGui.QCursor.pos()
@@ -512,8 +525,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         y = cursor_position.y() - (window_height // 2)
         self.setGeometry(x, y, window_width, window_height)
         self.last_height = window_height
-        UT.maya_main_window().activateWindow()
-
+        
         # Set layouts to vertical direction
         self.modeling_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
         self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignTop)
@@ -558,77 +570,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.animation_scroll_area.updateGeometry()
         self.graph_widget.updateGeometry()
         self.graph_scroll_area.updateGeometry()
-    
-    #----------------------------------------------------------------------------------
-    # Window event handlers
-    #----------------------------------------------------------------------------------
-    def mousePressEvent(self, event):
-        # Only handle events that occur outside the frame
-        if event.button() == QtCore.Qt.LeftButton:
-            self.dragging = True
-            self.offset = event.globalPos() - self.pos()
-            event.accept()
 
-        UT.maya_main_window().activateWindow()
-    
-    def mouseMoveEvent(self, event):
-        # Only handle events that occur outside the frame
-        if event.buttons() == QtCore.Qt.LeftButton and self.dragging:
-            self.move(event.globalPos() - self.offset)
-            event.accept()
-    
-    def mouseReleaseEvent(self, event):
-        if event.button() == QtCore.Qt.LeftButton:
-            self.dragging = False
-            event.accept()
-        UT.maya_main_window().activateWindow()
-    
-    def resizeEvent(self, event):
-        """Handle window resize events
-        
-        This method detects when the window crosses the height threshold of 65 pixels
-        and adjusts the modeling layout's horizontal priority accordingly.
-        It also updates function button layouts based on window orientation.
-        """
-        current_height = self.height()
-        current_width = self.width()
-        is_horizontal = current_width > current_height
-        
-        # Check if we've crossed the threshold (65 pixels)
-        if hasattr(self, 'last_height'):
-            was_below_threshold = self.last_height < 65
-            is_below_threshold = current_height < 65
-            
-            if was_below_threshold != is_below_threshold:
-                # We've crossed the threshold, update the layout
-                self.modeling_layout.horizontal_priority = is_below_threshold
-                self.animation_layout.horizontal_priority = is_below_threshold
-                self.graph_layout.horizontal_priority = is_below_threshold
-                # Force layout update
-                self.modeling_widget.updateGeometry()
-                self.modeling_scroll_area.updateGeometry()
-                self.animation_widget.updateGeometry()
-                self.animation_scroll_area.updateGeometry()
-                self.graph_widget.updateGeometry()
-                self.graph_scroll_area.updateGeometry()
-        
-        # Check if orientation has changed and update function button layouts
-        if hasattr(self, 'last_orientation') and self.last_orientation != is_horizontal:
-            self.update_function_button_layouts(is_horizontal)
-        
-        # Store current values for next comparison
-        self.last_height = current_height
-        self.last_orientation = is_horizontal 
-    
-    def closeEvent(self, event):
-        """Override closeEvent to properly clean up Maya window reference"""
-        # Save the database before closing to ensure all changes are saved
-        self.toggle_db.save_database()
-        
-        # Delete the window from Maya's window list if it exists
-        window_name = self.objectName()
-        if window_name and cmds.window(window_name, exists=True):
-            cmds.deleteUI(window_name, window=True)
+        #UT.maya_main_window().activateWindow()
     
     #----------------------------------------------------------------------------------
     # Function Button System
@@ -1159,8 +1102,8 @@ class ToolBoxWindow(QtWidgets.QWidget):
         
         button_layout.addWidget(add_button)
 
-        # Store current orientation
-        content_widget.is_horizontal = self.width() > self.height()
+        # Store current orientation based on height threshold
+        content_widget.is_horizontal = self.height() < self.HEIGHT_THRESHOLD
         
         # Add the button layout to the main layout
         main_layout.addLayout(button_layout)
@@ -1317,7 +1260,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         super(ToolBoxWindow, self).closeEvent(event)
        
     #----------------------------------------------------------------------------------
-    # Resize handling methods
+    # Event filter and handlers
     #----------------------------------------------------------------------------------
     def _get_resize_edge_from_frame_pos(self, frame_pos, frame_rect):
         """Determine which resize edge the position is on within the frame
@@ -1406,55 +1349,88 @@ class ToolBoxWindow(QtWidgets.QWidget):
             new_geometry.setHeight(new_height)
         
         self.setGeometry(new_geometry)
-        
-    def mouseMoveEvent(self, event):
-        # Handle dragging
-        if self.dragging and self.offset:
-            self.move(event.globalPos() - self.offset)
-            event.accept()
-            return
-            
-        # Handle resizing
-        if self.resizing and self.resize_edge:
-            global_pos = event.globalPos()
-            new_geometry = self.geometry()
-            
-            if 'right' in self.resize_edge:
-                width = global_pos.x() - new_geometry.left()
-                new_geometry.setWidth(max(self.minimumWidth(), width))
-            if 'bottom' in self.resize_edge:
-                height = global_pos.y() - new_geometry.top()
-                new_geometry.setHeight(max(self.minimumHeight(), height))
-            if 'left' in self.resize_edge:
-                diff = global_pos.x() - new_geometry.left()
-                if new_geometry.width() - diff >= self.minimumWidth():
-                    new_geometry.setLeft(global_pos.x())
-            if 'top' in self.resize_edge:
-                diff = global_pos.y() - new_geometry.top()
-                if new_geometry.height() - diff >= self.minimumHeight():
-                    new_geometry.setTop(global_pos.y())
-                    
-            self.setGeometry(new_geometry)
-            event.accept()
-            return
             
     def resizeEvent(self, event):
-        """Handle window resize events and update layouts if orientation changes"""
-        # Call parent class implementation
+        """Handle window resize events
+        
+        This method:
+        1. Detects when the window crosses the height threshold and updates layouts accordingly
+        2. Uses a fixed height threshold instead of width/height comparison for determining orientation
+        """
+        # Call parent implementation
         super(ToolBoxWindow, self).resizeEvent(event)
         
-        # Check if orientation has changed
-        is_horizontal = self.width() > self.height()
+        current_height = self.height()
         
-        # Store current orientation to detect changes
-        if not hasattr(self, '_last_orientation') or self._last_orientation != is_horizontal:
-            self._last_orientation = is_horizontal
-            # Update layouts based on new orientation
+        # Determine orientation based on height threshold instead of width/height comparison
+        is_horizontal = current_height < self.HEIGHT_THRESHOLD
+        
+        # Check if orientation has changed and update all layouts
+        if not hasattr(self, 'last_orientation') or self.last_orientation != is_horizontal:
+            # Update custom function button layouts
             self.update_function_button_layouts(is_horizontal)
             
+            # Update default tab layouts based on orientation
+            if is_horizontal:
+                # Set all layouts to horizontal direction
+                self.modeling_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+                self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter)
+                self.modeling_layout_01.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+                self.animation_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+                self.graph_layout.setDirection(QtWidgets.QBoxLayout.LeftToRight)
+                
+                # Configure grid layouts for horizontal arrangement
+                self.modeling_layout_02.grid(1, 0)  
+                self.modeling_layout_03.grid(1, 0)  
+                self.modeling_layout_04.grid(1, 0)
+            else:
+                # Set layouts to vertical direction
+                self.modeling_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+                self.modeling_layout.setAlignment(QtCore.Qt.AlignCenter | QtCore.Qt.AlignTop)
+                self.modeling_layout_01.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+                self.animation_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+                self.graph_layout.setDirection(QtWidgets.QBoxLayout.TopToBottom)
+                
+                # Configure grid layouts for vertical arrangement
+                self.modeling_layout_02.grid(0, 1)
+                self.modeling_layout_03.grid(0, 4)
+                self.modeling_layout_04.grid(0, 1)
+            
+            # Force layout update
+            self.modeling_widget.updateGeometry()
+            self.modeling_scroll_area.updateGeometry()
+            self.animation_widget.updateGeometry()
+            self.animation_scroll_area.updateGeometry()
+            self.graph_widget.updateGeometry()
+            self.graph_scroll_area.updateGeometry()
+            
+            # Store the new orientation
+            self.last_orientation = is_horizontal
+        
+        # Check if we've crossed the height threshold (65 pixels) for additional layout adjustments
+        # This is separate from the main orientation logic but still uses a threshold approach
+        if hasattr(self, 'last_height'):
+            was_below_threshold = self.last_height < 65
+            is_below_threshold = current_height < 65
+            
+            if was_below_threshold != is_below_threshold:
+                # We've crossed the threshold, update the layout
+                self.modeling_layout.horizontal_priority = is_below_threshold
+                self.animation_layout.horizontal_priority = is_below_threshold
+                self.graph_layout.horizontal_priority = is_below_threshold
+                # Force layout update
+                self.modeling_widget.updateGeometry()
+                self.modeling_scroll_area.updateGeometry()
+                self.animation_widget.updateGeometry()
+                self.animation_scroll_area.updateGeometry()
+                self.graph_widget.updateGeometry()
+                self.graph_scroll_area.updateGeometry()
+        
+        # Store current height for next comparison
+        self.last_height = current_height
+            
     #----------------------------------------------------------------------------------
-    # Event filter and handlers
-    #----------------------------------------------------------------------------------
+
     def eventFilter(self, obj, event):
         """Main event filter that dispatches events to specialized handlers
         
@@ -1482,16 +1458,17 @@ class ToolBoxWindow(QtWidgets.QWidget):
             elif event.buttons() == QtCore.Qt.LeftButton:
                 return self._handle_frame_drag_or_resize(event)
         elif event_type == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.LeftButton:
+            UT.maya_main_window().activateWindow()
             return self._handle_frame_mouse_press(event)
         elif event_type == QtCore.QEvent.MouseButtonRelease and event.button() == QtCore.Qt.LeftButton:
             return self._handle_frame_mouse_release(event)
         elif event_type == QtCore.QEvent.Leave:
             return self._handle_frame_mouse_leave(event)
         
+        
         # Let the parent class handle other events
-        UT.maya_main_window().activateWindow()
         return super(ToolBoxWindow, self).eventFilter(obj, event)
-    
+
     def _handle_util_button_events(self, event):
         """Handle events specific to the utility button
         
@@ -1507,6 +1484,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
             # Start dragging the window when left-click and drag on util_button
             self.dragging = True
             self.offset = event.globalPos() - self.pos()
+            UT.maya_main_window().activateWindow()
             return True  
             
         elif event_type == QtCore.QEvent.MouseMove and event.buttons() == QtCore.Qt.LeftButton and self.dragging:
@@ -1557,7 +1535,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
                 while QtWidgets.QApplication.overrideCursor() is not None:
                     QtWidgets.QApplication.restoreOverrideCursor()
         
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
         return True
     
     def _handle_frame_drag_or_resize(self, event):
@@ -1578,7 +1556,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
             self.move(event.globalPos() - self.offset)
             return True  # Event handled
         
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
         return False
     
     def _handle_frame_mouse_press(self, event):
@@ -1617,7 +1595,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
                 
             QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.ClosedHandCursor)
             
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
         return True  # Event handled
     
     def _handle_frame_mouse_release(self, event):
@@ -1658,7 +1636,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
         if was_resizing or was_dragging:
             return True  # Event handled
         
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
         return False
     
     def _handle_frame_mouse_leave(self, event):
@@ -1678,7 +1656,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
             self._reset_cursor()
             
             self.resize_edge = None
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
         return True  # Event handled
         
     def _reset_cursor(self):
@@ -1691,4 +1669,15 @@ class ToolBoxWindow(QtWidgets.QWidget):
         while QtWidgets.QApplication.overrideCursor() is not None:
             QtWidgets.QApplication.restoreOverrideCursor()
         
-        UT.maya_main_window().activateWindow()
+        #UT.maya_main_window().activateWindow()
+    
+    def closeEvent(self, event):
+        """Override closeEvent to properly clean up Maya window reference"""
+        # Save the database before closing to ensure all changes are saved
+        self.toggle_db.save_database()
+        
+        # Delete the window from Maya's window list if it exists
+        window_name = self.objectName()
+        if window_name and cmds.window(window_name, exists=True):
+            cmds.deleteUI(window_name, window=True)
+    

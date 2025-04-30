@@ -129,9 +129,8 @@ class ScriptManagerWidget(QtWidgets.QWidget):
     def __init__(self, parent=None):
         if parent is None:
             # Lazy import MAIN to avoid circular dependency
-            from . import main as MAIN
-            manager = MAIN.PickerWindowManager.get_instance()
-            parent = manager._picker_widgets[0] if manager._picker_widgets else None
+            from . import utils as UT
+            parent = UT.tool_box_window()
         super(ScriptManagerWidget, self).__init__(parent)
         self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
@@ -208,10 +207,6 @@ class ScriptManagerWidget(QtWidgets.QWidget):
         
         self.python_function_preset_button.addMenuLabel('Presets Commands',position=(0,0))
         self.python_function_preset_button.addToMenu('Set Attribute', self.ppf_set_attribute, position=(1,0))
-        self.python_function_preset_button.addToMenu('Match IK to FK', self.ppf_match_ik_to_fk, position=(2,0))
-        self.python_function_preset_button.addToMenu('Match FK to IK', self.ppf_match_fk_to_ik, position=(3,0))
-        self.python_function_preset_button.addToMenu('Button Appearance', self.ppf_button_appearance, position=(4,0))
-        self.python_function_preset_button.addToMenu('Get Selected Button IDs', self.ppf_get_selected_button_ids, position=(5,0))
 
         self.mel_function_preset_button = CB.CustomButton(text='', icon=':addClip.png', size=14, height=20, width=20, radius=3,color='#385c73',alpha=0,textColor='#aaaaaa', 
                                                           ContextMenu=True, onlyContext= True, cmColor='#333333',tooltip='Python function presets', flat=True)
@@ -564,7 +559,7 @@ class ScriptManagerWidget(QtWidgets.QWidget):
         self.mel_editor.setStyleSheet(editor_style)
         self.mel_highlighter = ScriptSyntaxHighlighter(self.mel_editor.document())
         # Force document margin to create space for line numbers
-        self.mel_editor.document().setDocumentMargin(15)
+        self.mel_editor.document().setDocumentMargin(5)
         
         # Set tab width for both editors
         font = self.python_editor.font()
@@ -626,29 +621,7 @@ class ScriptManagerWidget(QtWidgets.QWidget):
     #--------------------------------------------------------------------------------------------------------------------
     # Preset Functions
     #--------------------------------------------------------------------------------------------------------------------
-    def ppf_match_ik_to_fk(self): # Match IK to FK
-        preset_code = '''#Replace the ik_controls and fk_joints with your own names
-ik_controls = ['@ns.ik_pole_ctrl', '@ns.ik_arm_or_leg_ctrl'] 
-fk_joints = ['@ns.fk_upper_arm_or_leg_jnt', '@ns.fk_elbow_or_knee_jnt', '@ns.fk_wrist_or_ankle_jnt'] 
-@match_ik_to_fk(ik_controls, fk_joints)'''
-        
-        # Insert code at the current cursor position
-        cursor = self.python_editor.textCursor()
-        cursor.insertText(preset_code)
-        self.python_editor.setFocus()
-
-    def ppf_match_fk_to_ik(self): # Match FK to IK
-        preset_code = '''#Replace the fk_controls and ik_joints with your own names
-fk_controls = ['@ns.fk_upper_arm_or_leg_ctrl', '@ns.fk_elbow_or_knee_ctrl', '@ns.fk_wrist_or_ankle_ctrl'] 
-ik_joints = ['@ns.ik_upper_arm_or_leg_jnt', '@ns.ik_elbow_or_knee_jnt', '@ns.ik_wrist_or_ankle_jnt'] 
-@match_fk_to_ik(fk_controls, ik_joints)'''
-        
-        # Insert code at the current cursor position
-        cursor = self.python_editor.textCursor()
-        cursor.insertText(preset_code)
-        self.python_editor.setFocus()
-    
-    def ppf_set_attribute(self): # Match FK to IK
+    def ppf_set_attribute(self): 
         preset_code = '''#Replace the Object, Attribute and Attribute Value with your own names
 cmds.setAttr("@ns.Object.Attribute", AttributeValue)'''
         
@@ -657,39 +630,11 @@ cmds.setAttr("@ns.Object.Attribute", AttributeValue)'''
         cursor.insertText(preset_code)
         self.python_editor.setFocus()
 
-    def ppf_button_appearance(self): # Button Appearance
-        preset_code = '''@TF.button_appearance(text=" ", opacity=1, selectable=1, target_buttons=None)'''
-        
-        # Insert code at the current cursor position
-        cursor = self.python_editor.textCursor()
-        cursor.insertText(preset_code)
-        self.python_editor.setFocus()
-        
-    def ppf_get_selected_button_ids(self): # Get Selected Button IDs
-        # Get the canvas from the picker button
-        canvas = None
-        if self.picker_button:
-            canvas = self.picker_button.parent()
-            
-        if canvas:
-            # Get all selected buttons
-            selected_buttons = canvas.get_selected_buttons()
-            
-            # Extract button IDs
-            button_ids = [button.unique_id for button in selected_buttons]
-            
-            # Create the preset code
-            preset_code = f'''button_ids = {button_ids}'''
-            
-            # Insert code at the current cursor position
-            cursor = self.python_editor.textCursor()
-            cursor.insertText(preset_code)
-            self.python_editor.setFocus()
     #--------------------------------------------------------------------------------------------------------------------
     def mel_preset_function_01(self):
         print('Mel Preset Function 01')
 
-    def mpf_set_attribute(self): # Match FK to IK
+    def mpf_set_attribute(self): 
         preset_code = '''#Replace the Object, Attribute and Attribute Value with your own names
 setAttr "@ns.Object.Attribute" Attribute Value;'''
         
@@ -747,13 +692,15 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
             self.function_preset_stack.setCurrentIndex(0 if is_python else 1)
             
     def execute_code(self):
-        """Modified to ensure each button gets its own script data"""
+        """Modified to ensure each button gets its own script data and both Python and MEL scripts are saved"""
         if self.picker_button:
             # Create fresh script data for this button
+            # Always save both Python and MEL code, regardless of which is currently selected
             script_data = {
                 'type': 'python' if self.python_button.isChecked() else 'mel',
                 'python_code': self.python_editor.toPlainText(),
                 'mel_code': self.mel_editor.toPlainText(),
+                # For backward compatibility, 'code' field contains the currently selected script
                 'code': self.python_editor.toPlainText() if self.python_button.isChecked() else self.mel_editor.toPlainText()
             }
             
@@ -762,13 +709,16 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
             self.picker_button.changed.emit(self.picker_button)
             self.close()
         elif self.current_button_data:
-            # Update the current button data with the new script
+            # Update the current button data with both scripts
             script_type = 'python' if self.python_button.isChecked() else 'mel'
-            script_text = self.python_editor.toPlainText() if script_type == 'python' else self.mel_editor.toPlainText()
             
-            # Update the button data
+            # Save both Python and MEL scripts
             self.current_button_data['script_type'] = script_type
-            self.current_button_data['script'] = script_text
+            self.current_button_data['python_code'] = self.python_editor.toPlainText()
+            self.current_button_data['mel_code'] = self.mel_editor.toPlainText()
+            
+            # For backward compatibility, update the 'script' field with the currently selected script
+            self.current_button_data['script'] = self.python_editor.toPlainText() if script_type == 'python' else self.mel_editor.toPlainText()
             
             # Emit the signal to notify that the script has been updated
             self.script_updated.emit(self.current_button_data)
@@ -918,11 +868,23 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
         self.current_button_data = button_data
         self.current_button = None
         
-        # Set the script text
-        if "script" in button_data:
+        # Set the Python script text
+        if "python_code" in button_data:
+            self.python_editor.setPlainText(button_data["python_code"])
+        elif "script" in button_data and ("script_type" not in button_data or button_data.get("script_type") == "python"):
+            # For backward compatibility, use 'script' if it's Python or type not specified
             self.python_editor.setPlainText(button_data["script"])
         else:
             self.python_editor.setPlainText("")
+        
+        # Set the MEL script text
+        if "mel_code" in button_data:
+            self.mel_editor.setPlainText(button_data["mel_code"])
+        elif "script" in button_data and button_data.get("script_type") == "mel":
+            # For backward compatibility, use 'script' if it's MEL
+            self.mel_editor.setPlainText(button_data["script"])
+        else:
+            self.mel_editor.setPlainText("")
         
         # Set the script type
         if "script_type" in button_data and button_data["script_type"] == "mel":

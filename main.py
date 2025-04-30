@@ -38,7 +38,7 @@ def show_tool_box():
     
     # Show the window
     tool_box_window.show()
-    
+    UT.maya_main_window().activateWindow()
     return tool_box_window
 
 # Function to be called from Maya's script editor or shelf button

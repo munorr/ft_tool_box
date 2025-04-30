@@ -41,3 +41,25 @@ def rgba_value(hex_color, factor, alpha=None):
 def maya_main_window():
     main_window_ptr = omui.MQtUtil.mainWindow()
     return wrapInstance(int(main_window_ptr), QtWidgets.QWidget)
+
+def tool_box_window():
+    """Return the current instance of the Tool Box window.
+    
+    Returns:
+        QtWidgets.QWidget: The Tool Box window instance, or None if not open.
+    """
+    from . import main
+    return main.tool_box_window
+
+def activate_tool_box_window():
+    """Activate the Tool Box window (bring to front and give focus).
+    
+    Returns:
+        bool: True if window was activated, False if window doesn't exist.
+    """
+    window = tool_box_window()
+    if window is not None:
+        window.activateWindow()
+        window.raise_()
+        return True
+    return False

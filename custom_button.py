@@ -12,7 +12,9 @@ except ImportError:
 import maya.cmds as cmds
 import maya.mel as mel
 
+
 from . import utils as UT
+from . import custom_line_edit as CLE
 
 class TwoColumnMenu(QtWidgets.QMenu):
     def __init__(self, parent=None):
@@ -23,6 +25,9 @@ class TwoColumnMenu(QtWidgets.QMenu):
         self.grid_layout.setSpacing(gls)
         self.grid_layout.setContentsMargins(gls, gls, gls, gls)
 
+        # Background color for the menu
+        self.bg_color = "rgba(35, 35, 35, 1)"
+        
         # Add the grid widget to the menu using a QWidgetAction
         widget_action = QtWidgets.QWidgetAction(self)
         widget_action.setDefaultWidget(self.grid_widget)
@@ -34,11 +39,133 @@ class TwoColumnMenu(QtWidgets.QMenu):
         self.setStyleSheet('QMenu { background-color: transparent; border: none; }')
         self.grid_widget.setStyleSheet(f'''
                 QWidget {{
-                    background-color: rgba(10, 10, 10, .8);
+                    background-color: {self.bg_color};
                     border: 1px solid #444444;
                     border-radius: 3px;
                     padding:  4px 5px;
                 }}''')
+
+    def _create_menu_button(self, action):
+        # Extract text, function and color from the action
+        text = ''
+        func = None
+        button_color = None
+        
+        # Handle QAction
+        if isinstance(action, QtWidgets.QAction):
+            text = action.text()
+            icon = action.icon() if action.icon() else None
+            
+            def trigger_action():
+                self.close()
+                action.triggered.emit()
+                
+            func = trigger_action
+            
+        # Handle tuple with properties dictionary
+        elif isinstance(action, tuple) and len(action) >= 2 and isinstance(action[1], dict):
+            properties = action[1]
+            button_action = action[0]
+            
+            # Get color from properties if available
+            if 'color' in properties and properties['color']:
+                button_color = properties['color']
+            
+            # Handle different action types
+            if isinstance(button_action, QtWidgets.QAction):
+                text = button_action.text()
+                icon = button_action.icon() if button_action.icon() else None
+                
+                def trigger_action():
+                    self.close()
+                    button_action.triggered.emit()
+                    
+                func = trigger_action
+            
+            elif isinstance(button_action, tuple) and len(button_action) >= 2:
+                text = str(button_action[0])
+                if callable(button_action[1]):
+                    action_func = button_action[1]
+                    
+                    def call_func():
+                        self.close()
+                        action_func()
+                        
+                    func = call_func
+            
+            else:
+                text = str(button_action)
+        
+        # Handle simple tuple (text, function)
+        elif isinstance(action, tuple) and len(action) >= 2:
+            text = str(action[0])
+            if callable(action[1]):
+                action_func = action[1]
+                
+                def call_func():
+                    self.close()
+                    action_func()
+                    
+                func = call_func
+        
+        # Handle any other case
+        else:
+            text = str(action)
+        
+        # Create the button
+        button = QtWidgets.QPushButton(text)
+        if func:
+            button.clicked.connect(func)
+        
+        # Use custom color if provided, otherwise use parent's color
+        bg_color = button_color if button_color else self.parent().cmColor
+        
+        # Make sure we're using the actual color value, not None
+        if bg_color is not None:
+            button.setStyleSheet(f'''
+                QPushButton {{
+                    background-color: {UT.rgba_value(bg_color, 1)};
+                    color: white;
+                    border: none;
+                    padding: 3px 10px;
+                    border-radius: 3px;
+                    text-align: center;
+                    font-size: 12px;
+                }}
+                QPushButton:hover {{
+                    background-color: {UT.rgba_value(bg_color, 1.2)};
+                }}
+            ''')
+        button.setFixedHeight(self.parent().cmHeight)
+        return button
+
+    def _create_separator(self):
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFixedHeight(2)
+        separator.setStyleSheet("""
+            QFrame {
+                background-color: #444444;
+                margin: 4px 5px;
+                border-radius: 1px;
+            }
+        """)
+        return separator
+    
+    def _create_menu_label(self, text):
+        label = QtWidgets.QLabel(text)
+        label.setStyleSheet(f'''
+            QLabel {{
+                color: #999999;
+                background-color: transparent;
+                border: none;
+                padding: 0px 10px;
+                font-size: 11px;
+            }}
+        ''')
+        label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
+        label.setFixedHeight(self.parent().cmHeight)
+        return label
 
     def rebuild_grid(self, actions):
         # Clear existing items
@@ -51,72 +178,134 @@ class TwoColumnMenu(QtWidgets.QMenu):
         max_row = max_col = -1
         
         for item in actions:
-            # Extract action and properties
-            action = None
-            position = None
-            rowSpan = 1
-            colSpan = 1
-            
-            if isinstance(item, tuple) and len(item) >= 2:
-                if isinstance(item[1], dict):
-                    # New format with properties dictionary
-                    action = item[0]
+            # Check for special types (separator, label)
+            if isinstance(item, tuple):
+                # Check for new label format: ('label', text, properties)
+                if len(item) == 3 and item[0] == 'label':
+                    label_text = item[1]
+                    properties = item[2]
+                    
+                    # Extract position and span information
+                    if isinstance(properties, dict):
+                        # New format with properties dictionary
+                        position = properties.get('position')
+                        rowSpan = properties.get('rowSpan', 1)
+                        colSpan = properties.get('colSpan', 1)
+                    else:
+                        # Legacy format with just position
+                        position = properties
+                        rowSpan = 1
+                        colSpan = 1
+                    
+                    positioned.append(('label', label_text, position, rowSpan, colSpan))
+                    if position:
+                        max_row = max(max_row, position[0] + rowSpan - 1)
+                        max_col = max(max_col, position[1] + colSpan - 1)
+                    else:
+                        unpositioned.append(('label', label_text, rowSpan, colSpan))
+                    continue
+                    
+                # Check for separator with new format: ('separator', properties)
+                if len(item) == 2 and item[0] == 'separator':
                     properties = item[1]
                     
                     # Extract position and span information
-                    position = properties.get('position')
-                    rowSpan = properties.get('rowSpan', 1)
-                    colSpan = properties.get('colSpan', 1)
-                elif isinstance(item[1], tuple):
-                    # Legacy format with position tuple
-                    action = item[0]
-                    position = item[1]
-                    rowSpan = item[2] if len(item) > 2 else 1
-                    colSpan = item[3] if len(item) > 3 else 1
-                else:
-                    # Other tuple format
-                    action = item
-            else:
-                # Simple item
-                action = item
+                    if isinstance(properties, dict):
+                        # New format with properties dictionary
+                        position = properties.get('position')
+                        rowSpan = properties.get('rowSpan', 1)
+                        colSpan = properties.get('colSpan', 1)
+                    else:
+                        # Legacy format with just position
+                        position = properties
+                        rowSpan = 1
+                        colSpan = 2  # Default separator spans 2 columns
+                    
+                    positioned.append(('separator', None, position, rowSpan, colSpan))
+                    if position:
+                        max_row = max(max_row, position[0] + rowSpan - 1)
+                        max_col = max(max_col, position[1] + colSpan - 1)
+                    continue
                 
-            # Add to appropriate list based on position
-            if position is not None:
-                positioned.append((action, position, rowSpan, colSpan))
-                max_row = max(max_row, position[0] + rowSpan - 1)
-                max_col = max(max_col, position[1] + colSpan - 1)
+                # Handle regular action items
+                if len(item) >= 2:
+                    # Extract action and properties
+                    action = None
+                    position = None
+                    rowSpan = 1
+                    colSpan = 1
+                    
+                    if isinstance(item[1], dict):
+                        # New format with properties dictionary
+                        action = item[0]
+                        properties = item[1]
+                        
+                        # Extract position and span information
+                        position = properties.get('position')
+                        rowSpan = properties.get('rowSpan', 1)
+                        colSpan = properties.get('colSpan', 1)
+                    elif isinstance(item[1], tuple):
+                        # Legacy format with position tuple
+                        action = item[0]
+                        position = item[1]
+                        rowSpan = item[2] if len(item) > 2 else 1
+                        colSpan = item[3] if len(item) > 3 else 1
+                    else:
+                        # Other tuple format
+                        action = item[0]
+                        position = item[1] if len(item) > 1 else None
+                        
+                    # Add to appropriate list based on position
+                    if position is not None:
+                        positioned.append(('action', action, position, rowSpan, colSpan))
+                        max_row = max(max_row, position[0] + rowSpan - 1)
+                        max_col = max(max_col, position[1] + colSpan - 1)
+                    else:
+                        unpositioned.append(('action', action, rowSpan, colSpan))
+                else:
+                    # Simple tuple item
+                    unpositioned.append(('action', item, 1, 1))
             else:
-                unpositioned.append((action, rowSpan, colSpan))
+                # Simple item (not a tuple)
+                unpositioned.append(('action', item, 1, 1))
         
         # Place positioned items first
-        for action, pos, rowSpan, colSpan in positioned:
-            if isinstance(action, tuple) and len(action) >= 2 and isinstance(action[1], dict):
-                # New format - pass the whole item to create_menu_button
-                button = self._create_menu_button((action[0], action[1]))
-            else:
-                # Legacy format
-                button = self._create_menu_button(action)
-                
-            self.grid_layout.addWidget(button, pos[0], pos[1], rowSpan, colSpan)
+        for item_type, item, pos, rowSpan, colSpan in positioned:
+            if item_type == 'separator':
+                widget = self._create_separator()
+            elif item_type == 'label':
+                widget = self._create_menu_label(item)
+            else:  # 'action'
+                if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], dict):
+                    # New format - pass the whole item to create_menu_button
+                    widget = self._create_menu_button(item)
+                else:
+                    # Legacy format
+                    widget = self._create_menu_button(item)
+                    
+            self.grid_layout.addWidget(widget, pos[0], pos[1], rowSpan, colSpan)
         
         # Find available positions for unpositioned items
         if unpositioned:
             next_row = 0 if max_row == -1 else max_row + 1
             next_col = 0
             
-            for action, rowSpan, colSpan in unpositioned:
-                if isinstance(action, tuple) and len(action) >= 2 and isinstance(action[1], dict):
-                    # New format - pass the whole item to create_menu_button
-                    button = self._create_menu_button((action[0], action[1]))
-                else:
-                    # Legacy format
-                    button = self._create_menu_button(action)
+            for item_type, item, rowSpan, colSpan in unpositioned:
+                if item_type == 'label':
+                    widget = self._create_menu_label(item)
+                else:  # 'action'
+                    if isinstance(item, tuple) and len(item) >= 2 and isinstance(item[1], dict):
+                        # New format - pass the whole item to create_menu_button
+                        widget = self._create_menu_button(item)
+                    else:
+                        # Legacy format
+                        widget = self._create_menu_button(item)
                     
                 # If this item would overflow the columns, move to next row
                 if next_col + colSpan > 2:
                     next_col = 0
                     next_row += 1
-                self.grid_layout.addWidget(button, next_row, next_col, rowSpan, colSpan)
+                self.grid_layout.addWidget(widget, next_row, next_col, rowSpan, colSpan)
                 next_col += colSpan
                 if next_col >= 2:
                     next_col = 0
@@ -125,89 +314,13 @@ class TwoColumnMenu(QtWidgets.QMenu):
         self.grid_widget.adjustSize()
         self.adjustSize()
         
-    def _create_menu_button(self, action):
-        # Extract action and properties
-        button_color = None  # Default to None, will use parent color if not specified
-        
-        # Check if action is a QAction or a tuple
-        if isinstance(action, QtWidgets.QAction):
-            button = QtWidgets.QPushButton(action.text())
-            if action.icon():
-                button.setIcon(action.icon())
-            button.clicked.connect(action.triggered)
-        elif isinstance(action, tuple) and len(action) >= 2 and isinstance(action[1], dict):
-            # New format with properties dictionary: (action, properties_dict)
-            button_action = action[0]
-            properties = action[1]
-            
-            # Extract color from properties if available
-            if 'color' in properties and properties['color']:
-                button_color = properties['color']
-                
-            # Create button based on action type
-            if isinstance(button_action, QtWidgets.QAction):
-                button = QtWidgets.QPushButton(button_action.text())
-                if button_action.icon():
-                    button.setIcon(button_action.icon())
-                button.clicked.connect(button_action.triggered)
-            else:
-                # Handle non-QAction case (text, function tuple)
-                if isinstance(button_action, tuple) and len(button_action) >= 2:
-                    button = QtWidgets.QPushButton(str(button_action[0]))
-                    if callable(button_action[1]):
-                        button.clicked.connect(button_action[1])
-                else:
-                    button = QtWidgets.QPushButton(str(button_action))
-        else:
-            # Handle legacy tuple case (used by CustomFunctionButton)
-            if isinstance(action, tuple) and len(action) >= 1:
-                if isinstance(action[0], tuple):
-                    # Format: ((text, function), ...)
-                    text_func_pair = action[0]
-                    if isinstance(text_func_pair, tuple) and len(text_func_pair) >= 2:
-                        button = QtWidgets.QPushButton(text_func_pair[0])
-                        # Only connect if the second element is callable
-                        if callable(text_func_pair[1]):
-                            button.clicked.connect(text_func_pair[1])
-                    else:
-                        # Fallback if tuple format is unexpected
-                        button = QtWidgets.QPushButton(str(text_func_pair))
-                else:
-                    # Format: (text, function, ...)
-                    button = QtWidgets.QPushButton(str(action[0]))
-                    # If there's a second element and it's callable, connect it
-                    if len(action) >= 2 and callable(action[1]):
-                        button.clicked.connect(action[1])
-            else:
-                # Fallback for any other format
-                button = QtWidgets.QPushButton(str(action))
-        
-        # Use custom color if provided, otherwise use parent's color
-        bg_color = button_color if button_color else self.parent().cmColor
-        
-        button.setStyleSheet(f'''
-            QPushButton {{
-                background-color: {UT.rgba_value(bg_color, 1)};
-                color: white;
-                border: none;
-                padding: 3px 10px;
-                border-radius: 3px;
-                text-align: center;
-            }}
-            QPushButton:hover {{
-                background-color: {UT.rgba_value(bg_color, 1.2)};
-            }}
-        ''')
-        button.setFixedHeight(self.parent().cmHeight)
-        return button
-
 class CustomButton(QtWidgets.QPushButton):
     singleClicked = QtCore.Signal()
     doubleClicked = QtCore.Signal()
     rightClicked = QtCore.Signal(QtCore.QPoint)
 
     def __init__(self, text='', icon=None, color='#4d4d4d', tooltip='', flat=False, size=None, width=None, height=None, parent=None, radius=3, ContextMenu=False, 
-                 cmColor='#00749a', cmHeight = 20, onlyContext=False, alpha=1, textColor='white', text_size=12):
+                 cmColor='#444444', cmHeight = 20, onlyContext=False, alpha=1, textColor='white', text_size=12):
         super().__init__(parent)
         self.setFlat(flat)
         self.base_color = color
@@ -219,6 +332,7 @@ class CustomButton(QtWidgets.QPushButton):
         self.textColor = textColor
         self.menu_actions = []  # Store menu actions
         self.cmHeight = cmHeight
+        self.rename_line_edit = None  # Initialize rename_line_edit attribute
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)
         self.setStyleSheet(self.get_style_sheet(color, flat, radius))
         
@@ -313,28 +427,40 @@ class CustomButton(QtWidgets.QPushButton):
         text_width = font_metrics.horizontalAdvance(text)
         return text_width + padding
 
-    def addMenuSeparator(self, position=None):
+    def addMenuSeparator(self, position=None, rowSpan=1, colSpan=1):
         """
         Add a separator line to the context menu.
         Args:
             position (tuple, optional): (row) position in the grid
+            rowSpan (int, optional): Number of rows the separator spans
+            colSpan (int, optional): Number of columns the separator spans
         """
         if self.context_menu:
-            self.menu_actions.append(('separator', position))
+            properties = {
+                'position': position,
+                'rowSpan': rowSpan,
+                'colSpan': colSpan
+            }
+            self.menu_actions.append(('separator', properties))
             self.context_menu.rebuild_grid(self.menu_actions)
 
-    def addMenuLabel(self, text, position=None):
+    def addMenuLabel(self, text, position=None, rowSpan=1, colSpan=1):
         """
         Add a label to the context menu.
         Args:
             text (str): Text to display in the menu
             position (tuple, optional): (row, column) position in the grid
+            rowSpan (int, optional): Number of rows the label spans
+            colSpan (int, optional): Number of columns the label spans
         """
         if self.context_menu:
-            # Create a QAction for the label to ensure consistent handling
-            label_action = QtWidgets.QAction(text, self)
-            label_action.setEnabled(False)  # Labels shouldn't be clickable
-            self.menu_actions.append((label_action, position))
+            # Use 'label' as a special identifier for text labels
+            properties = {
+                'position': position,
+                'rowSpan': rowSpan,
+                'colSpan': colSpan
+            }
+            self.menu_actions.append(('label', text, properties))
             self.context_menu.rebuild_grid(self.menu_actions)
 
     def addToMenu(self, name, function, icon=None, position=None, rowSpan=1, colSpan=1, color=None):
@@ -369,8 +495,13 @@ class CustomButton(QtWidgets.QPushButton):
 
     def show_context_menu(self, pos):
         if self.context_menu:
-            self.reset_button_state()
-            self.context_menu.exec_(self.mapToGlobal(pos))
+            # Close any existing rename line edit
+            if self.rename_line_edit and self.rename_line_edit.isVisible():
+                self.rename_line_edit.deleteLater()
+                self.rename_line_edit = None
+                
+            self.context_menu.rebuild_grid(self.menu_actions)
+            self.context_menu.popup(self.mapToGlobal(pos))
                   
     #--------------------------------------------------------------------------------------------------------
     def mousePressEvent(self, event):
@@ -638,6 +769,9 @@ class CustomToggleButton(QtWidgets.QPushButton):
         self.checked_color = checked_color
         self.hover_color = hover_color
         self.unchecked_color = unchecked_color
+        self.border_radius = border_radius
+        self.cmHeight = 22  # Default menu height for context menu items
+        self.cmColor = '#444444'  # Default menu color
         
         # Store button in group if specified
         if group_id is not None:
@@ -680,6 +814,10 @@ class CustomToggleButton(QtWidgets.QPushButton):
             }}
         ''')
         self.setToolTip(f"<html><body><p>{tooltip}</p></body></html>")
+        
+        # Add context menu for tab operations
+        self.context_menu = None
+        self.setup_context_menu()
         
     def on_toggle(self, checked):
         """
@@ -758,6 +896,97 @@ class CustomToggleButton(QtWidgets.QPushButton):
             # If group is empty, remove it
             if not CustomToggleButton.button_groups[self.group_id]:
                 del CustomToggleButton.button_groups[self.group_id]
+
+    def setup_context_menu(self):
+        """Setup the context menu for the toggle button"""
+        self.context_menu = TwoColumnMenu(self)
+        self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.show_context_menu)
+        self.menu_actions = []  # Store menu actions like CustomButton does
+        
+        # Only add delete option for custom tabs (IDs > 2)
+        if self.button_id > 2:
+            # Add label
+            self.addMenuLabel('Tab Options', position=(0, 0), colSpan=2)
+            
+            # Add delete action
+            self.addToMenu('Delete Tab', self.delete_tab, position=(1, 0), colSpan=2, color='#ff5555')
+    
+    def addMenuLabel(self, text, position=None, rowSpan=1, colSpan=1):
+        """
+        Add a label to the context menu.
+        Args:
+            text (str): Text to display in the menu
+            position (tuple, optional): (row, column) position in the grid
+            rowSpan (int, optional): Number of rows the label spans
+            colSpan (int, optional): Number of columns the label spans
+        """
+        if self.context_menu:
+            # Use 'label' as a special identifier for text labels
+            properties = {
+                'position': position,
+                'rowSpan': rowSpan,
+                'colSpan': colSpan
+            }
+            self.menu_actions.append(('label', text, properties))
+            self.context_menu.rebuild_grid(self.menu_actions)
+
+    def addToMenu(self, name, function, icon=None, position=None, rowSpan=1, colSpan=1, color=None):
+        """
+        Add an item to the context menu.
+        Args:
+            name (str): Text to display in the menu
+            function: Callback function when item is clicked
+            icon (str, optional): Icon path/resource
+            position (tuple, optional): (row, column) position in the grid
+            rowSpan (int, optional): Number of rows the item spans
+            colSpan (int, optional): Number of columns the item spans
+            color (str, optional): Custom color for the menu button (hex format, e.g. '#ff0000')
+        """
+        if self.context_menu:
+            action = QtWidgets.QAction(name, self)
+            if icon:
+                action.setIcon(QtGui.QIcon(f":/{icon}"))
+            action.triggered.connect(function)
+            
+            # Store position, span, and color with the action
+            # Use a dictionary to store all properties for better extensibility
+            properties = {
+                'position': position,
+                'rowSpan': rowSpan,
+                'colSpan': colSpan,
+                'color': color
+            }
+            
+            self.menu_actions.append((action, properties))
+            self.context_menu.rebuild_grid(self.menu_actions)
+            
+    def show_context_menu(self, pos):
+        """Show the context menu with options based on button ID"""
+        if self.context_menu and self.button_id > 2:
+            # Show the menu at the cursor position
+            global_pos = self.mapToGlobal(pos)
+            self.context_menu.popup(global_pos)
+    
+    def delete_tab(self):
+        """Delete this tab if it's a custom tab (ID > 2)"""
+        if self.button_id > 2:
+            # Find the parent window to call the remove method
+            parent = self.parent()
+            while parent and not hasattr(parent, 'remove_toggle_button_by_id'):
+                parent = parent.parent()
+                
+            if parent and hasattr(parent, 'remove_toggle_button_by_id'):
+                parent.remove_toggle_button_by_id(self.button_id)
+    
+    # Event Filter: Basic mouse press event handling
+    def mousePressEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            UT.maya_main_window().activateWindow()
+            super(CustomToggleButton, self).mousePressEvent(event)
+        elif event.button() == QtCore.Qt.RightButton:
+            # Right-click is handled by the customContextMenuRequested signal
+            pass
 
 class ColorPickerMenu(QtWidgets.QMenu):
     def __init__(self, parent=None):
@@ -964,7 +1193,8 @@ class CustomFunctionButton(CustomButton):
     # Signal emitted when button color is changed, passing the button ID and new color
     color_changed = QtCore.Signal(int, str)
     
-    def __init__(self, text='Function', button_id=None, script='', color='#5285A6', parent=None, width=None, height=24, script_type='python', cmColor="#444444"):
+    def __init__(self, text='Function', button_id=None, script='', color='#5285A6', parent=None, width=None, height=24, 
+                 script_type='python', cmColor="#444444",cmHeight=24):
         # Ensure text is properly formatted
         display_text = text.strip() if text else 'Function'
         
@@ -975,11 +1205,14 @@ class CustomFunctionButton(CustomButton):
             ContextMenu=True,
             width=width,
             height=height,
-            parent=parent
+            parent=parent,
+            cmColor=cmColor,
+            cmHeight=cmHeight
         )
         
         self.button_id = button_id  # Unique identifier for the button
         self.script = script  # Script to run when button is clicked
+        self.rename_line_edit = None  # Will hold the QLineEdit for inline renaming
         
         # Validate script_type
         if script_type.lower() not in ['python', 'mel']:
@@ -995,31 +1228,50 @@ class CustomFunctionButton(CustomButton):
         self.setup_context_menu()
     
     def setup_context_menu(self):
-        # Clear existing menu actions
-        self.menu_actions = []
+        # Add items to the context menu
+        self.addMenuLabel('Function Button',position=(0,0),colSpan=2) 
+        self.addToMenu('Script Manager', lambda: self._execute_and_close_menu(self.open_script_manager), position=(1,0),colSpan=2)
+        self.addToMenu('Rename', lambda: self._execute_and_close_menu(self.rename_button), position=(2,0))
+        self.addToMenu('Color', lambda: self._execute_and_close_menu(self.change_color), position=(2,1))
+        self.addToMenu('Delete', lambda: self._execute_and_close_menu(self.delete_button), position=(3,0),colSpan=2)
         
-        # Add Script Manager option - (text, function, position, rowSpan, colSpan)
-        self.menu_actions.append((('Script Manager', self.open_script_manager), (0, 0), 1, 2))  # Full width
-        
-        # Add Rename option
-        self.menu_actions.append((('Rename', self.rename_button), (1, 0)))
-        
-        # Add Color option
-        self.menu_actions.append((('Color', self.change_color), (1, 1)))
-        
-        # Add Delete option
-        self.menu_actions.append((('Delete', self.delete_button), (2, 0), 1, 2))  # Full width
-        
-        # Update the context menu with our actions
-        if self.context_menu:
-            self.context_menu.rebuild_grid(self.menu_actions)
     
-    def run_script(self):
+    def _execute_and_close_menu(self, func):
+        """Execute a function and ensure the context menu is closed"""
+        # Close the menu first
+        if self.context_menu and self.context_menu.isVisible():
+            self.context_menu.hide()
+        # Use a short timer to allow the menu to close before executing the function
+        QTimer.singleShot(10, func)
+    
+    def run_script(self):       
         """Run the associated script when the button is clicked"""
+        import re
         if not self.script:
             return
-            
-        try:
+        
+        code = self.script
+        if code:
+            try:
+                # Handle @TF.function_name(arguments) syntax with indentation preservation
+                modified_code = re.sub(
+                    r'^(\s*)@TF\.([\w_]+)\s*\((.*?)\)',
+                    r'\1import ft_tool_box.tool_functions as TF\n\1TF.\2(\3)',
+                    code,
+                    flags=re.MULTILINE  # Enable multiline mode to match at the start of each line
+                )
+                # Execute the modified code
+                if self.script_type == 'python':
+                    print(modified_code)
+                    exec(modified_code)
+                else:
+                    import maya.mel as mel
+                    mel.eval(modified_code)
+            except Exception as e:
+                cmds.warning(f"Error executing {self.script_type} code: {str(e)}")
+        
+
+        '''try:
             if self.script_type.lower() == 'python':
                 # Execute Python script
                 exec(self.script)
@@ -1030,7 +1282,7 @@ class CustomFunctionButton(CustomButton):
                 cmds.warning(f'Unknown script type: {self.script_type}')
                 return
         except Exception as e:
-            cmds.warning(f'Error running script for button {self.text()}: {str(e)}')
+            cmds.warning(f'Error running script for button {self.text()}: {str(e)}')'''
     
     def open_script_manager(self):
         """Open the script manager dialog to edit the button's script"""
@@ -1041,26 +1293,77 @@ class CustomFunctionButton(CustomButton):
             cmds.warning("Cannot open script manager: button ID is not set")
     
     def rename_button(self):
-        """Open a dialog to rename the button"""
-        from . import custom_dialog
+        """Show an inline QLineEdit to rename the button"""
+        # First, ensure the context menu is closed
+        if self.context_menu and self.context_menu.isVisible():
+            self.context_menu.hide()
         
-        dialog = custom_dialog.InputDialog(
-            parent=self.parent(),
-            title='Rename Function Button',
-            prompt='Enter new name:',
-            default_text=self.text()
-        )
+        # Set active window to ToolBox Window
+        from . import utils as UT
+
+        UT.tool_box_window().activateWindow()
+        # Import the custom line edit class
+        from . import custom_line_edit
         
-        new_name = dialog.get_text()
-        if new_name and new_name.strip():
-            new_name = new_name.strip()
-            self.setText(new_name)
-            self.setToolTip(f'<html><body><p style=\'color:white; white-space:nowrap; \'>Function Button: {new_name}</p></body></html>')
+        # Create a FocusLosingLineEdit on top of the button
+        line_edit = custom_line_edit.FocusLosingLineEdit(self)
+        self.rename_line_edit = line_edit  # Store reference to prevent garbage collection
+        line_edit.setText(self.text())
+        line_edit.setStyleSheet(f'''
+            QLineEdit {{
+                background-color: {UT.rgba_value(self.base_color, .8)};
+                color: {self.textColor};
+                border: 1px solid #5285a6;
+                border-radius: {self.radius}px;
+                padding: 2px 5px;
+                font-size: {self.textSize}px;
+            }}
+        ''')
+        line_edit.setGeometry(self.rect())
+        line_edit.setAlignment(QtCore.Qt.AlignCenter)
+        
+        # Handle escape key for cancellation
+        def key_press_event(event):
+            if event.key() == QtCore.Qt.Key_Escape:
+                self.rename_line_edit = None
+                line_edit.deleteLater()
+                UT.maya_main_window().activateWindow()
+            else:
+                # Call the original keyPressEvent
+                custom_line_edit.FocusLosingLineEdit.keyPressEvent(line_edit, event)
+        line_edit.keyPressEvent = key_press_event
+        
+        # Connect focus out event to apply the name
+        def apply_name():
+            new_name = line_edit.text().strip()
+            if new_name:
+                self.setText(new_name)
+                self.setToolTip(f'<html><body><p style=\'color:white; white-space:nowrap; \'>Function Button: {new_name}</p></body></html>')
+                
+                # Update the button width to fit the new text
+                if self.width() is not None:
+                    new_width = self.calculate_button_width(new_name)
+                    # Only update if the new width is different to avoid unnecessary resizing
+                    if new_width != self.width():
+                        self.setMinimumWidth(new_width)
+                        # If parent has a layout, ask it to update
+                        if self.parent() and self.parent().layout():
+                            self.parent().layout().update()
+                
+                # Emit signal to update the database
+                if self.button_id is not None:
+                    self.renamed.emit(self.button_id, new_name)
+            self.rename_line_edit = None
+            line_edit.deleteLater()
             
-            # Emit signal to update the database
-            if self.button_id is not None:
-                self.renamed.emit(self.button_id, new_name)
-    
+            UT.maya_main_window().activateWindow()
+        line_edit.editingFinished.connect(apply_name)
+        
+        # Set initial focus
+        line_edit.show()
+        line_edit.setFocus()
+        line_edit.selectAll()
+        
     def create_color_change_function(self, color):
         """Create a function that changes the button's color"""
         def change_to_color():
@@ -1105,9 +1408,12 @@ class CustomFunctionButton(CustomButton):
         color_layout.setContentsMargins(3, 5, 3, 5)
         
         color_palette = [
-            "#828282", "#ffca0d", "#1accc7", "#f977f8", "#82b60b", 
-            "#4e4e4e", "#ff7f0c", "#38578a", "#c347a5", "#567b02", 
-            "#1b1b1b", "#f82929", "#18263d", "#552549", "#324801", 
+            "#000000", "#3F3F3F", "#999999", "#9B0028", "#00045F",  
+            "#0000FF", "#004618", "#250043", "#C700C7", "#894733",  
+            "#3E221F", "#992500", "#FF0000", "#00FF00", "#004199",  
+            "#FFFFFF", "#FFFF00", "#63DCFF", "#43FFA2", "#FFAFAF",  
+            "#E3AC79", "#FFFF62", "#009953", "#D9916C", "#DFC74D",  
+            "#A1CE46", "#3AC093", "#40D1B8", "#399DCD", "#9B6BCD"  
         ]
 
         for i, color in enumerate(color_palette):
@@ -1155,7 +1461,7 @@ class CustomFunctionButton(CustomButton):
         # Delete the button
         self.setParent(None)  # Detach from parent before deletion
         self.deleteLater()
-    
+
     def set_script(self, script, script_type='python'):
         """Set the script and script type for this button
         
