@@ -43,7 +43,7 @@ class CustomScrollArea(QtWidgets.QScrollArea):
         delta_x = event.angleDelta().x()
         
         # Make scrolling more responsive but not too fast
-        sensitivity_factor = 10  # Higher value = less sensitive scrolling
+        sensitivity_factor = 5  # Higher value = less sensitive scrolling
         scroll_y = delta_y // sensitivity_factor  # Reduced sensitivity for vertical scrolling
         scroll_x = delta_x // sensitivity_factor  # Same reduced sensitivity for horizontal scrolling
         

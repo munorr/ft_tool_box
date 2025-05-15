@@ -3,6 +3,7 @@ from functools import partial
 import maya.cmds as cmds
 from pathlib import Path
 import uuid
+import json
 
 try:
     from PySide6 import QtWidgets, QtCore, QtGui
@@ -25,6 +26,7 @@ from . import custom_scroll as CS
 from . import custom_layout as CL
 from . import create_shape as CSP
 from . import fade_away_logic as FA
+from . import custom_line_edit as CLE
 from . import toggle_db
 
 class ToolBoxWindow(QtWidgets.QWidget):
@@ -61,6 +63,9 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.fade_manager = FA.FadeAway(self)
         self.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self.fade_manager.show_frame_context_menu)
+        
+        # Default extension for data files
+        self.data_file_extension = 'json'
 
     def setup_ui(self):
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -270,11 +275,13 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.adjustment_grp_button.addToMenu("2 Groups", TF.create_double_adjustment_group, position=(1, 0))
         self.adjustment_grp_button.addToMenu("Snap", TF.create_double_adjustment_group_move, position=(1, 1))
 
-        self.anim_extra = CB.CustomButton(icon=':moreOverlay.png', flat =False, color='#262626', tooltip="More Options.",ContextMenu=True, onlyContext=True,cmColor='#5285a6', cmHeight=22)
+        self.anim_extra = CB.CustomButton(icon=':moreOverlay.png', flat =False, color='#262626', tooltip="More Options.",ContextMenu=True, onlyContext=True,cmColor='#444444', cmHeight=22)
         self.anim_extra.addToMenu("Mute All", TF.mute_all)
         self.anim_extra.addToMenu("Unmute All", TF.unMute_all)
         self.anim_extra.addToMenu("Mute Selected", TF.mute_selected)
         self.anim_extra.addToMenu("Unmute Selected", TF.unMute_selected)
+        self.anim_extra.addToMenu("Lock Selected", TF.lock_selected)
+        self.anim_extra.addToMenu("Unlock Selected", TF.unlock_selected)
         self.anim_extra.addToMenu("Break Connections", TF.break_connections,colSpan=2)
 
         self.centerPivot_button = CB.CustomButton(icon=':CenterPivot.png',color='#333333', tooltip="Resets the selected object(s) pivot to the center.")
@@ -311,6 +318,39 @@ class ToolBoxWindow(QtWidgets.QWidget):
         #self.color_override_button = CB.CustomButton(text='Color', color='#262626', tooltip="Override Color: Overrides the color of the selected object(s).")
         self.color_override_button = CB.ColorPickerButton()
         
+        self.orient_frame = QtWidgets.QFrame()
+        self.orient_frame.setStyleSheet("background-color: #444444;")
+        self.orient_frame.setFixedHeight(24)
+        self.orient_frame_layout = QtWidgets.QHBoxLayout(self.orient_frame)
+        self.orient_frame_layout.setContentsMargins(2, 2, 2, 2)
+        self.orient_frame_layout.setSpacing(2)
+
+        self.orient_dropdown = QtWidgets.QComboBox(self)
+        self.orient_dropdown.addItems(["X", "Y", "Z"])
+        self.orient_dropdown.setCurrentText("X")
+        #self.orient_dropdown.setFixedSize(20, 20)
+        self.orient_dropdown.setStyleSheet(f'''QComboBox{{background-color: {UT.rgba_value('#222222', 1,.9)}; color: #dddddd;border: 1px solid #2f2f2f; padding: 0px 0px 0px 5px;}}
+                                    QComboBox:hover {{background-color: {UT.rgba_value('#222222', .8,1)};}}
+                                    QComboBox::drop-down {{border: 0px;}}
+                                    QComboBox::down-arrow {{background-color: transparent;}} 
+                                    QToolTip {{background-color: #222222; color: white; border:0px;}} ''')
+
+        self.orient_input = CLE.IntegerLineEdit(width=30, height=20)
+        self.orient_input.setValue(45)
+        self.orient_input.setStyleSheet(f'''QLineEdit{{border: 1px solid #2c83be;background-color: #222222;}}''')
+
+        self.orient_add_button = CB.CustomButton(text='+', color='#222222', tooltip="Add Orientation", width=20, height=20)
+        self.orient_sub_button = CB.CustomButton(text='-', color='#222222', tooltip="Subtract Orientation", width=20, height=20)
+        
+        self.orient_frame_layout.addWidget(self.orient_dropdown)
+        self.orient_frame_layout.addWidget(self.orient_input)
+        self.orient_frame_layout.addWidget(self.orient_add_button)
+        self.orient_frame_layout.addWidget(self.orient_sub_button)
+
+        
+        
+
+        
         #-----------------------------------------------------------------------------------------------------------------------------
         self.store_pos_button.singleClicked.connect(TF.store_component_position)
         self.move_to_pos_button.singleClicked.connect(TF.move_objects_to_stored_position)
@@ -327,6 +367,9 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.pivot_to_world_button.singleClicked.connect(TF.pivot_to_world_origin)
         self.pivot_to_selected_button.singleClicked.connect(TF.selected_pivot_to_active_pivot_pos)
         self.pivot_to_selected_button.doubleClicked.connect(TF.selected_pivot_to_active_pivot_ori)
+
+        self.orient_add_button.singleClicked.connect(lambda: self.rotate_object(1))
+        self.orient_sub_button.singleClicked.connect(lambda: self.rotate_object(-1))
 
         #self.color_override_button.singleClicked.connect(lambda: CB.ColorPickerMenu().show_color_menu(self.color_override_button))
         
@@ -350,6 +393,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
 
         self.modeling_layout_04.addWidget(self.create_shape_button)
         self.modeling_layout_04.addWidget(self.color_override_button)
+        self.modeling_layout_04.addWidget(self.orient_frame)
         #-----------------------------------------------------------------------------------------------------------------------------
         # Animation Widget
         #-----------------------------------------------------------------------------------------------------------------------------
@@ -573,6 +617,23 @@ class ToolBoxWindow(QtWidgets.QWidget):
 
         #UT.maya_main_window().activateWindow()
     
+    def rotate_object(self, increment):
+        orient_input = float(self.orient_input.text())
+        orient_direction = self.orient_dropdown.currentText()
+        selected_objects = cmds.ls(selection=True)
+        if not selected_objects:
+            cmds.warning("No objects selected.")
+            return
+
+        for obj in selected_objects:
+            value = orient_input * increment
+            if orient_direction == "X":
+                cmds.rotate(value,0,0, obj, relative=True, objectSpace=True)
+            elif orient_direction == "Y":
+                cmds.rotate(0,value,0, obj, relative=True, objectSpace=True)
+            elif orient_direction == "Z":
+                cmds.rotate(0,0,value, obj, relative=True, objectSpace=True)
+
     #----------------------------------------------------------------------------------
     # Function Button System
     #----------------------------------------------------------------------------------
@@ -662,6 +723,166 @@ class ToolBoxWindow(QtWidgets.QWidget):
         for button_data in buttons:
             self._create_function_button(content_widget, button_data)
     
+    def store_data(self):
+        """Save the Ft ToolBox data to a JSON file"""
+        try:
+            # Create a copy of the data to avoid modifying the original
+            data_to_save = {"tabs": []}
+            
+            # Save all tabs including default tabs for completeness
+            for tab in self.toggle_db.tool_box_data["tabs"]:
+                tab_copy = dict(tab)
+                data_to_save["tabs"].append(tab_copy)
+            
+            # Convert to JSON string with pretty formatting
+            data_json = json.dumps(data_to_save, indent=4)
+            
+            # Prompt user for save location using Maya's file dialog
+            file_path = cmds.fileDialog2(
+                fileFilter=f"Ft ToolBox Data (*.{self.data_file_extension});;All Files (*.*)",
+                dialogStyle=2,  # Maya style dialog
+                fileMode=0,     # Save file mode
+                caption="Save Ft ToolBox Data"
+            )
+            
+            # Check if user canceled the dialog
+            if not file_path:
+                return False
+                
+            # Get the selected file path (fileDialog2 returns a list)
+            file_path = file_path[0]
+            
+            # Ensure the file has the correct extension
+            if not file_path.endswith(f".{self.data_file_extension}"):
+                file_path += f".{self.data_file_extension}"
+                
+            # Get the directory path
+            directory = os.path.dirname(file_path)
+            
+            # Create directory if it doesn't exist
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                
+            # Write to file
+            with open(file_path, 'w') as f:
+                f.write(data_json)
+                
+            # Show success message
+            cmds.inViewMessage(message=f"Ft ToolBox data saved to {file_path}", pos='midCenter', fade=True, fadeOutTime=1.0)
+            return True
+        except Exception as e:
+            cmds.warning(f"Error saving Ft ToolBox data to file: {e}")
+            return False
+    
+    def load_data(self):
+        """Load the Ft ToolBox data from a JSON file"""
+        try:
+            # Prompt user for file location using Maya's file dialog
+            file_path = cmds.fileDialog2(
+                fileFilter=f"Ft ToolBox Data (*.{self.data_file_extension});;All Files (*.*)",
+                dialogStyle=2,  # Maya style dialog
+                fileMode=1,     # Open file mode
+                caption="Load Ft ToolBox Data"
+            )
+            
+            # Check if user canceled the dialog
+            if not file_path:
+                return False
+                
+            # Get the selected file path (fileDialog2 returns a list)
+            file_path = file_path[0]
+            
+            # Check if the file exists
+            if not os.path.exists(file_path):
+                cmds.warning(f"Ft ToolBox data file not found: {file_path}")
+                return False
+                
+            # Read from file
+            with open(file_path, 'r') as f:
+                data_json = f.read()
+                
+            # Check if the JSON string is empty or invalid
+            if not data_json or data_json.strip() == '':
+                cmds.warning("Ft ToolBox data file is empty or invalid")
+                return False
+                
+            # Convert the JSON string to a Python object
+            loaded_data = json.loads(data_json)
+            
+            # Validate the loaded data
+            if not isinstance(loaded_data, dict) or "tabs" not in loaded_data:
+                cmds.warning("Invalid Ft ToolBox data format in file")
+                return False
+            
+            # Start with default tabs
+            self.toggle_db.tool_box_data = {"tabs": list(self.toggle_db.default_tabs)}
+            
+            # Add custom tabs to the data structure (tabs with ID > 2)
+            existing_ids = [tab["id"] for tab in self.toggle_db.tool_box_data["tabs"]]
+            for tab in loaded_data["tabs"]:
+                if tab["id"] > 2:  # Only add custom tabs from the file
+                    if tab["id"] not in existing_ids:
+                        self.toggle_db.tool_box_data["tabs"].append(tab)
+            
+            # Save to Maya's defaultObjectSet
+            self.toggle_db.save_database()
+            
+            # Recreate UI elements to reflect the loaded data
+            self._rebuild_ui_from_loaded_data()
+            
+            # Show success message
+            cmds.inViewMessage(message=f"Ft ToolBox data loaded from {file_path}", pos='midCenter', fade=True, fadeOutTime=1.0)
+            return True
+        except Exception as e:
+            cmds.warning(f"Error loading Ft ToolBox data from file: {e}")
+            return False
+    
+    def _rebuild_ui_from_loaded_data(self):
+        """Rebuild UI elements after loading data"""
+        # First, remove the close button from the layout to reposition it later
+        self.body_header_layout.removeWidget(self.close_button)
+        
+        # Clear existing toggle buttons
+        for button_id in list(self.toggle_buttons.keys()):
+            if button_id > 2:  # Only remove custom tabs
+                self.remove_toggle_button_by_id(button_id)
+        
+        # Recreate toggle buttons from database
+        tbw = 12  # Default toggle button width
+        tbh = 12  # Default toggle button height
+        tbr = 6   # Default toggle button border radius
+        
+        # Create toggle buttons from database
+        self.create_toggle_buttons(tbw, tbh, tbr)
+        
+        # Connect toggle buttons to switch_widget method
+        for button_id, button in self.toggle_buttons.items():
+            try:
+                # First disconnect any existing connections to avoid duplicates
+                button.toggled.disconnect()
+            except:
+                pass  # It's okay if it wasn't connected
+            
+            # Connect the button's toggled signal to the switch_widget method
+            button.toggled.connect(lambda checked, bid=button_id: self.switch_widget(checked, bid))
+        
+        # Add toggle buttons to layout in the correct order
+        for button_id in sorted(self.toggle_buttons.keys()):
+            if button_id > 2:  # Only add custom tabs
+                self.body_header_layout.addWidget(self.toggle_buttons[button_id])
+        
+        # Re-add spacing and close button at the end
+        #self.body_header_layout.addSpacing(10)
+        self.body_header_layout.addWidget(self.close_button)
+        
+        # Update the content widget
+        self.update_content_widget()
+        
+        # Switch to the first tab
+        if 0 in self.toggle_buttons:
+            self.toggle_buttons[0].setChecked(True)
+            self.switch_widget(True, 0)
+    
     def remove_function_button(self, button_id):
         """Remove a function button"""
         # Remove from database
@@ -691,7 +912,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
             
             # Position the script manager near the cursor
             pos = QtGui.QCursor.pos()
-            script_widget.move(pos.x() + 20, pos.y())
+            script_widget.move(pos.x() + 0, pos.y()-(script_widget.height()//2)-50)
     
     def update_button_script(self, button_data):
         """Update a function button's script and save to the database"""
@@ -749,7 +970,7 @@ class ToolBoxWindow(QtWidgets.QWidget):
             
         # No need to update UI since the signal is emitted by the button itself
         # which already updated its text
-                        
+
     def update_function_button_color(self, button_id, new_color):
         """Update a function button's color in the database and UI"""
         # Update database
@@ -1312,13 +1533,6 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.setCursor(cursor)
         self.frame.setCursor(cursor)
         
-        # Clear any existing override cursor before setting a new one
-        while QtWidgets.QApplication.overrideCursor() is not None:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            
-        # Use application-wide cursor override to ensure it takes effect
-        QtWidgets.QApplication.setOverrideCursor(cursor)
-    
     def _handle_resize(self, global_pos):
         """Handle window resizing
         
@@ -1430,7 +1644,6 @@ class ToolBoxWindow(QtWidgets.QWidget):
         self.last_height = current_height
             
     #----------------------------------------------------------------------------------
-
     def eventFilter(self, obj, event):
         """Main event filter that dispatches events to specialized handlers
         
@@ -1464,10 +1677,18 @@ class ToolBoxWindow(QtWidgets.QWidget):
             return self._handle_frame_mouse_release(event)
         elif event_type == QtCore.QEvent.Leave:
             return self._handle_frame_mouse_leave(event)
+        #event for right click
+        elif event_type == QtCore.QEvent.MouseButtonPress and event.button() == QtCore.Qt.RightButton:
+            UT.maya_main_window().activateWindow()
+            return self._handle_frame_mouse_right_click(event)
         
         
         # Let the parent class handle other events
         return super(ToolBoxWindow, self).eventFilter(obj, event)
+
+    def _handle_frame_mouse_right_click(self, event):
+        
+        return True
 
     def _handle_util_button_events(self, event):
         """Handle events specific to the utility button

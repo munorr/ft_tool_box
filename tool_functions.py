@@ -551,6 +551,11 @@ def unMute_selected():
 def break_connections():
     mel.eval('channelBoxCommand -break;')
 
+def lock_selected():
+    mel.eval('channelBoxCommand -lock;')
+
+def unlock_selected():
+    mel.eval('channelBoxCommand -unlock;')
 #---------------------------------------------------------------------------------------------------------------
 def center_pivot():
     mel.eval('''CenterPivot;''')

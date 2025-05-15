@@ -53,6 +53,8 @@ class FadeAway(QObject):
             self.fade_timer.stop()
             self.fade_animation.stop()
             self.parent.setWindowOpacity(1.0)
+        else:
+            self.fade_timer.start(10)
 
     def set_context_menu_open(self, is_open):
         self.context_menu_open = is_open
