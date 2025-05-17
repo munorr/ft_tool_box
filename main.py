@@ -45,7 +45,7 @@ def show_tool_box():
 def run():
     """Run the Tool Box"""
     return show_tool_box()
-run()
+#run()
 # For testing in Maya
-#if __name__ == "__main__":
-#    run()
+if __name__ == "__main__":
+    run()
