@@ -1198,10 +1198,18 @@ class CustomFunctionButton(CustomButton):
         # Ensure text is properly formatted
         display_text = text.strip() if text else 'Function'
         
+        # Check if the script contains a tooltip directive
+        tooltip_text = f'Function Button: {display_text}'
+        if script:
+            import re
+            tooltip_match = re.search(r'^\s*@TF\.tool_tip\s*\(\s*[\"\'](.*?)[\"\'](\s*)?\)', script, flags=re.MULTILINE)
+            if tooltip_match:
+                tooltip_text = tooltip_match.group(1)
+        
         super(CustomFunctionButton, self).__init__(
             text=display_text,
             color=color,
-            tooltip=f'Function Button: {display_text}',
+            tooltip=tooltip_text,
             ContextMenu=True,
             width=width,
             height=height,
@@ -1235,7 +1243,6 @@ class CustomFunctionButton(CustomButton):
         self.addToMenu('Color', lambda: self._execute_and_close_menu(self.change_color), position=(2,1))
         self.addToMenu('Delete', lambda: self._execute_and_close_menu(self.delete_button), position=(3,0),colSpan=2)
         
-    
     def _execute_and_close_menu(self, func):
         """Execute a function and ensure the context menu is closed"""
         # Close the menu first
@@ -1253,9 +1260,12 @@ class CustomFunctionButton(CustomButton):
         code = self.script
         if code:
             try:
+                # Remove any tooltip directives from the code before execution
+                code = re.sub(r'^\s*@TF\.tool_tip\s*\(\s*[\"\'](.*?)[\"\'](\s*)?\)', '', code, flags=re.MULTILINE)
+                
                 # Handle @TF.function_name(arguments) syntax with indentation preservation
                 modified_code = re.sub(
-                    r'^(\s*)@TF\.([\w_]+)\s*\((.*?)\)',
+                    r'^(\s*)@TF\.(\w+)\s*\((.*?)\)',
                     r'\1import ft_tool_box.tool_functions as TF\n\1TF.\2(\3)',
                     code,
                     flags=re.MULTILINE  # Enable multiline mode to match at the start of each line
@@ -1270,19 +1280,6 @@ class CustomFunctionButton(CustomButton):
             except Exception as e:
                 cmds.warning(f"Error executing {self.script_type} code: {str(e)}")
         
-
-        '''try:
-            if self.script_type.lower() == 'python':
-                # Execute Python script
-                exec(self.script)
-            elif self.script_type.lower() == 'mel':
-                # Execute MEL script
-                mel.eval(self.script)
-            else:
-                cmds.warning(f'Unknown script type: {self.script_type}')
-                return
-        except Exception as e:
-            cmds.warning(f'Error running script for button {self.text()}: {str(e)}')'''
     
     def open_script_manager(self):
         """Open the script manager dialog to edit the button's script"""

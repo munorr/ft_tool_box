@@ -744,5 +744,16 @@ def match_all():
     mel.eval('''MatchTransform;''')
 #---------------------------------------------------------------------------------------------------------------
 
-
+def tool_tip(tooltip_text):
+    """
+    Special function to set a custom tooltip for a function button.
+    This function doesn't actually do anything when executed - it's parsed by the script manager
+    to update the button's tooltip.
+    
+    Args:
+        tooltip_text (str): The text to use as the button's tooltip
+    """
+    # This function doesn't need to do anything - it's just a marker that gets parsed
+    # when the script is applied in the script manager
+    pass
 

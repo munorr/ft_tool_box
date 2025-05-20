@@ -646,6 +646,7 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
     def set_picker_button(self, button):
         """Modified to ensure proper initialization of script data for individual buttons"""
         self.picker_button = button
+        self.current_button = button  # Store reference to the current button
         script_data = button.script_data if isinstance(button.script_data, dict) else {}
         
         # Create default script data if not properly formatted
@@ -691,6 +692,14 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
             self.editor_stack.setCurrentIndex(0 if is_python else 1)
             self.function_preset_stack.setCurrentIndex(0 if is_python else 1)
             
+    def extract_tooltip_from_script(self, script):
+        """Extract the tooltip from a script if it contains @TF.tool_tip"""
+        import re
+        tooltip_match = re.search(r'^\s*@TF\.tool_tip\s*\(\s*[\"\'](.*?)[\"\'](\s*)?\)', script, flags=re.MULTILINE)
+        if tooltip_match:
+            return tooltip_match.group(1)
+        return None
+
     def execute_code(self):
         """Modified to ensure each button gets its own script data and both Python and MEL scripts are saved"""
         if self.picker_button:
@@ -709,8 +718,12 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
             self.picker_button.changed.emit(self.picker_button)
             self.close()
         elif self.current_button_data:
-            # Update the current button data with both scripts
+            # Get the current script text based on the selected language
             script_type = 'python' if self.python_button.isChecked() else 'mel'
+            current_script = self.python_editor.toPlainText() if script_type == 'python' else self.mel_editor.toPlainText()
+            
+            # Check if the script contains a tooltip directive
+            tooltip = self.extract_tooltip_from_script(current_script)
             
             # Save both Python and MEL scripts
             self.current_button_data['script_type'] = script_type
@@ -718,7 +731,33 @@ setAttr "@ns.Object.Attribute" Attribute Value;'''
             self.current_button_data['mel_code'] = self.mel_editor.toPlainText()
             
             # For backward compatibility, update the 'script' field with the currently selected script
-            self.current_button_data['script'] = self.python_editor.toPlainText() if script_type == 'python' else self.mel_editor.toPlainText()
+            self.current_button_data['script'] = current_script
+            
+            # Update the tooltip if one was found in the script
+            if tooltip and self.current_button:
+                # Format the tooltip with HTML for proper styling
+                formatted_tooltip = f'<html><body><p style=\'color:white; white-space:nowrap; \'>{tooltip}</p></body></html>'
+                
+                # Update the tooltip on the button
+                self.current_button.setToolTip(formatted_tooltip)
+                
+                # Force the tooltip to update immediately
+                QtWidgets.QToolTip.hideText()
+                
+                # If this is a CustomFunctionButton, also update the base tooltip property
+                if hasattr(self.current_button, 'tooltip'):
+                    self.current_button.tooltip = tooltip
+                
+                # Force a UI refresh
+                self.current_button.update()
+                
+                # If the button has a parent, also update the parent to ensure layout changes are applied
+                if self.current_button.parent():
+                    self.current_button.parent().update()
+                    
+                    # If there's a layout, update it too
+                    if self.current_button.parent().layout():
+                        self.current_button.parent().layout().update()
             
             # Emit the signal to notify that the script has been updated
             self.script_updated.emit(self.current_button_data)
